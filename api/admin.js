@@ -1,8 +1,9 @@
 // interactions.js와 같은 폴더에 두세요 (예: api/admin.js)
 // 접속: https://<도메인>/api/admin  (쿼리에 키 안 붙여도 됨 — 로그인 폼으로 들어감)
 import crypto from "node:crypto";
-import { getUser, saveUser, listUsers, resetUser } from "../lib/db.js";
+import { getUser, saveUser, listUsers, resetUser, deleteUser, newUser } from "../lib/db.js";
 import { STEPS } from "../lib/quests.js";
+import { introView, stepView } from "../lib/views.js";
 
 const COOKIE_NAME = "admin_token";
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 30; // 30일 — 이게 "로그인 유지" 역할
@@ -40,6 +41,122 @@ function escapeHtml(str) {
     /[&<>"']/g,
     (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])
   );
+}
+
+function colorHex(color) {
+  return "#" + (color ?? 0x2c3e50).toString(16).padStart(6, "0");
+}
+
+// Discord embed 1개를 관리자 페이지에서 보여줄 HTML 카드로 변환
+function embedToHtml(view) {
+  const embed = view.embeds?.[0];
+  if (!embed) return "";
+  const fieldsHtml = (embed.fields || [])
+    .map(
+      (f) =>
+        `<div class="field"><b>${escapeHtml(f.name)}</b><br>${escapeHtml(f.value).replace(/\n/g, "<br>")}</div>`
+    )
+    .join("");
+  const footerHtml = embed.footer ? `<div class="footer">${escapeHtml(embed.footer.text)}</div>` : "";
+  return `
+    <div class="embed" style="border-left-color:${colorHex(embed.color)}">
+      <div class="embed-title">${escapeHtml(embed.title || "")}</div>
+      <div class="embed-desc">${escapeHtml(embed.description || "").replace(/\n/g, "<br>")}</div>
+      ${fieldsHtml}
+      ${footerHtml}
+    </div>`;
+}
+
+// custom_id("accept:0", "choose:4:A", "intro:start")를 실제 관리자 액션으로 변환해 버튼 렌더링
+function buttonsToHtml(view) {
+  const rows = view.components || [];
+  return rows
+    .map((r) => {
+      const buttons = r.components
+        .map((btn) => {
+          const [kind, part1, part2] = btn.custom_id.split(":");
+          let realAction = kind;
+          let stage = "";
+          let value = "";
+          if (kind === "intro") {
+            realAction = "introStart";
+          } else if (kind === "choose") {
+            stage = part1;
+            value = part2;
+          } else {
+            stage = part1; // accept / complete
+          }
+          return `<button class="style-${btn.style}" onclick="playAct(${JSON.stringify(
+            realAction
+          )}, ${JSON.stringify(stage)}, ${JSON.stringify(value)})">${escapeHtml(btn.label)}</button>`;
+        })
+        .join("");
+      return `<div class="btn-row">${buttons}</div>`;
+    })
+    .join("");
+}
+
+// ── 플레이 테스트 화면 ──────────────────────────────
+function renderPlayPage(id, user) {
+  const view = !user.introSeen ? introView() : stepView(user);
+  const stageInfo =
+    user.stage >= STEPS.length
+      ? "사건 종결"
+      : `${user.stage + 1} / ${STEPS.length} 단계 · ${user.status === "active" ? "진행 중" : "대기"}`;
+
+  return `<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>플레이 테스트 — ${escapeHtml(id)}</title>
+<style>
+  body { font-family: -apple-system, sans-serif; background: #36393f; color: #dcddde; display: flex; justify-content: center; padding: 24px; margin: 0; }
+  .wrap { width: 420px; max-width: 100%; }
+  .topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; font-size: 13px; }
+  .topbar a { color: #8ab4f8; text-decoration: none; }
+  .meta { font-size: 12px; color: #aaa; margin-bottom: 12px; word-break: break-all; }
+  .embed { background: #2f3136; border-left: 4px solid #3498db; border-radius: 4px; padding: 12px 16px; margin-bottom: 12px; }
+  .embed-title { font-weight: 700; margin-bottom: 6px; }
+  .embed-desc { font-size: 14px; white-space: pre-wrap; line-height: 1.5; }
+  .field { margin-top: 8px; font-size: 13px; }
+  .footer { margin-top: 10px; font-size: 11px; color: #999; }
+  .btn-row { display: flex; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+  button { padding: 8px 14px; border: none; border-radius: 4px; cursor: pointer; background: #4f545c; color: #fff; font-size: 13px; }
+  button:hover { opacity: 0.85; }
+  .style-3 { background: #2ecc71; }
+  .style-4 { background: #e74c3c; }
+  .admin-controls { margin-top: 20px; border-top: 1px solid #444; padding-top: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
+  .admin-controls button { background: #7f8c8d; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a href="/api/admin">← 대시보드로</a>
+    <span>🧪 플레이 테스트</span>
+  </div>
+  <div class="meta">유저 ID: <code>${escapeHtml(id)}</code> · ${stageInfo} · 골드 ${user.gold}</div>
+  ${embedToHtml(view)}
+  ${buttonsToHtml(view)}
+  <div class="admin-controls">
+    <button onclick="playAct('rewind')">◀ 강제 이전</button>
+    <button onclick="playAct('advance')">강제 다음 ▶</button>
+    <button onclick="if(confirm('정말 초기화할까요?')) playAct('reset')">초기화</button>
+  </div>
+</div>
+<script>
+  const PLAY_ID = ${JSON.stringify(id)};
+  async function playAct(action, stage, value) {
+    await fetch('/api/admin', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: PLAY_ID, action, stage, value }),
+    });
+    location.reload();
+  }
+</script>
+</body>
+</html>`;
 }
 
 // ── 로그인 화면 ──────────────────────────────
@@ -95,15 +212,15 @@ function renderDashboard(users) {
         <td>${u.gold}</td>
         <td>${u.titles?.length ? escapeHtml(u.titles.join(", ")) : "-"}</td>
         <td><code>${escapeHtml(JSON.stringify(u.flags))}</code></td>
-        <td>${u.nextAt ? new Date(u.nextAt).toLocaleString("ko-KR") : "-"}</td>
         <td>
           <div class="actions">
+            <a href="/api/admin?play=${encodeURIComponent(u.id)}" target="_blank"><button type="button" class="play">▶ 플레이</button></a>
             <button onclick="act('${u.id}','rewind')">◀ 이전</button>
             <button onclick="act('${u.id}','advance')">다음 ▶</button>
             <input type="number" id="stage-${u.id}" value="${u.stage}">
             <button onclick="setStage('${u.id}')">지정</button>
-            <button onclick="act('${u.id}','clearCooldown')">쿨다운 해제</button>
             <button class="danger" onclick="if(confirm('정말 초기화할까요?')) act('${u.id}','reset')">초기화</button>
+            <button class="danger" onclick="if(confirm('유저 데이터를 완전히 삭제할까요?')) act('${u.id}','deleteUser')">삭제</button>
           </div>
         </td>
       </tr>`;
@@ -126,25 +243,31 @@ function renderDashboard(users) {
   button { cursor: pointer; border: 1px solid #ccc; background: #fff; border-radius: 4px; padding: 4px 8px; }
   button:hover { background: #f0f0f0; }
   .danger { color: #c0392b; border-color: #c0392b; }
+  .play { color: #2980b9; border-color: #2980b9; }
   .logout { font-size: 13px; color: #888; border: none; background: none; text-decoration: underline; cursor: pointer; }
+  .header-actions { display: flex; gap: 8px; align-items: center; }
+  .new-test { background: #2c3e50; color: #fff; }
 </style>
 </head>
 <body>
   <h1>
     🦋 나비재단 사건부 — 관리자 페이지
-    <form method="POST" action="/api/admin" style="margin:0">
-      <input type="hidden" name="formAction" value="logout">
-      <button class="logout" type="submit">로그아웃</button>
-    </form>
+    <div class="header-actions">
+      <button class="new-test" onclick="createTestUser()">🧪 테스트 유저 생성</button>
+      <form method="POST" action="/api/admin" style="margin:0">
+        <input type="hidden" name="formAction" value="logout">
+        <button class="logout" type="submit">로그아웃</button>
+      </form>
+    </div>
   </h1>
   <p>전체 단계 수: <b>${STEPS.length}</b> · 접속 유저 수: <b>${users.length}</b></p>
   <table>
     <thead>
       <tr>
-        <th>유저 ID</th><th>단계</th><th>상태</th><th>골드</th><th>칭호</th><th>flags</th><th>다음 가능 시각</th><th>관리</th>
+        <th>유저 ID</th><th>단계</th><th>상태</th><th>골드</th><th>칭호</th><th>flags</th><th>관리</th>
       </tr>
     </thead>
-    <tbody>${rows || `<tr><td colspan="8">아직 아무도 시작하지 않았어요.</td></tr>`}</tbody>
+    <tbody>${rows || `<tr><td colspan="7">아직 아무도 시작하지 않았어요.</td></tr>`}</tbody>
   </table>
 
 <script>
@@ -161,6 +284,16 @@ function renderDashboard(users) {
     const stage = Number(document.getElementById('stage-' + userId).value);
     act(userId, 'setStage', { stage });
   }
+
+  async function createTestUser() {
+    const res = await fetch('/api/admin', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'createTestUser' }),
+    });
+    const data = await res.json();
+    if (data.id) location.href = '/api/admin?play=' + encodeURIComponent(data.id);
+  }
 </script>
 </body>
 </html>`;
@@ -169,6 +302,15 @@ function renderDashboard(users) {
 export async function GET(request) {
   if (!isLoggedIn(request)) {
     return new Response(renderLoginPage(false), {
+      headers: { "Content-Type": "text/html; charset=utf-8" },
+    });
+  }
+
+  const url = new URL(request.url);
+  const playId = url.searchParams.get("play");
+  if (playId) {
+    const user = await getUser(playId);
+    return new Response(renderPlayPage(playId, user), {
       headers: { "Content-Type": "text/html; charset=utf-8" },
     });
   }
@@ -223,11 +365,24 @@ export async function POST(request) {
     return new Response("unauthorized", { status: 401 });
   }
 
-  const { userId, action, stage, flags } = await request.json();
+  const { userId, action, stage, flags, value } = await request.json();
+
+  // 유저 없이 호출되는 액션 (테스트 유저 생성)
+  if (action === "createTestUser") {
+    const id = `test_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    await saveUser(id, newUser());
+    return Response.json({ ok: true, id });
+  }
+
   if (!userId) return new Response("userId 누락", { status: 400 });
 
   if (action === "reset") {
     await resetUser(userId);
+    return Response.json({ ok: true });
+  }
+
+  if (action === "deleteUser") {
+    await deleteUser(userId);
     return Response.json({ ok: true });
   }
 
@@ -237,24 +392,51 @@ export async function POST(request) {
     case "advance":
       user.stage = Math.min(user.stage + 1, STEPS.length);
       user.status = "ready";
-      user.nextAt = 0;
       break;
     case "rewind":
       user.stage = Math.max(user.stage - 1, 0);
       user.status = "ready";
-      user.nextAt = 0;
       break;
     case "setStage":
       user.stage = Math.max(0, Math.min(Number(stage), STEPS.length));
       user.status = "ready";
-      user.nextAt = 0;
-      break;
-    case "clearCooldown":
-      user.nextAt = 0;
       break;
     case "setFlags":
       user.flags = { ...user.flags, ...flags };
       break;
+
+    // ── 여기부터는 실제 디스코드 상호작용(interactions.js)과 동일한 로직 — 관리자 페이지에서 "직접 플레이"하기 위한 것 ──
+    case "introStart":
+      user.introSeen = true;
+      break;
+    case "accept":
+      if (user.status === "ready") user.status = "active";
+      break;
+    case "complete": {
+      if (user.status !== "active") break;
+      const step = STEPS[user.stage];
+      if (step?.type === "quest") {
+        user.gold += step.reward.gold;
+        if (step.reward.title && !user.titles.includes(step.reward.title)) {
+          user.titles.push(step.reward.title);
+        }
+        user.stage += 1;
+        user.status = "ready";
+      }
+      break;
+    }
+    case "choose": {
+      const step = STEPS[user.stage];
+      if (step?.type === "choice") {
+        const option = step.options.find((o) => o.value === value);
+        if (option) {
+          user.flags[step.flagKey] = value;
+          user.stage += 1;
+          user.status = "ready";
+        }
+      }
+      break;
+    }
     default:
       return new Response("unknown action", { status: 400 });
   }

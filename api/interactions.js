@@ -1,5 +1,5 @@
 import { verifyKey } from "discord-interactions";
-import { STEPS, COOLDOWN_MS } from "../lib/quests.js";
+import { STEPS } from "../lib/quests.js";
 import { getUser, saveUser, acquireLock, releaseLock } from "../lib/db.js";
 import {
   FLAGS,
@@ -87,13 +87,13 @@ export async function POST(request) {
 
         // 의뢰 수락
         if (action === "accept") {
-          if (user.status !== "ready" || Date.now() < user.nextAt) return update(stepView(user));
+          if (user.status !== "ready") return update(stepView(user));
           user.status = "active";
           await saveUser(userId, user);
           return update(stepView(user));
         }
 
-        // 의뢰 완료 → 보상 지급 → 10분 대기 시작
+        // 의뢰 완료 → 보상 지급 → 바로 다음 의뢰 오픈 (쿨다운 없음)
         if (action === "complete") {
           if (user.status !== "active") return update(stepView(user));
           const step = STEPS[user.stage];
@@ -104,7 +104,6 @@ export async function POST(request) {
           }
           user.stage += 1;
           user.status = "ready";
-          user.nextAt = Date.now() + COOLDOWN_MS;
 
           await saveUser(userId, user);
           return update(clearedView(step, user));
