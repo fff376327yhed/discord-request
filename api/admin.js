@@ -46,7 +46,9 @@ function isLoggedIn(request) {
 }
 
 function setCookieHeader(value, maxAge) {
-  return `${COOKIE_NAME}=${value}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`;
+  // maxAge 가 null 이면 브라우저를 닫을 때 사라지는 세션 쿠키
+  const age = maxAge == null ? "" : `; Max-Age=${maxAge}`;
+  return `${COOKIE_NAME}=${value}; Path=/; HttpOnly; Secure; SameSite=Lax${age}`;
 }
 
 function escapeHtml(str) {
@@ -55,6 +57,51 @@ function escapeHtml(str) {
     (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])
   );
 }
+
+// ── 다크모드 (모든 관리자 화면 공용) ──────────────────────────────
+// 처음엔 기기 설정(밝게/어둡게)을 따르고, 🌙 버튼으로 바꾸면 이 브라우저에 기억한다.
+const THEME_HEAD = `
+<script>
+  (function () {
+    try {
+      var t = localStorage.getItem('admin_theme');
+      if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+      document.documentElement.dataset.theme = t;
+    } catch (e) {}
+  })();
+  function toggleTheme() {
+    var next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+    document.documentElement.dataset.theme = next;
+    try { localStorage.setItem('admin_theme', next); } catch (e) {}
+    var b = document.getElementById('themeBtn');
+    if (b) b.textContent = next === 'dark' ? '☀️' : '🌙';
+  }
+  document.addEventListener('DOMContentLoaded', function () {
+    var b = document.getElementById('themeBtn');
+    if (b) b.textContent = document.documentElement.dataset.theme === 'dark' ? '☀️' : '🌙';
+  });
+</script>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #fafafa; --fg: #222; --card: #fff; --border: #ddd; --th: #f0f0f0;
+    --muted: #888; --btn-bg: #fff; --btn-hover: #f0f0f0; --btn-border: #ccc;
+    --input-bg: #fff; --primary: #2c3e50; --danger: #c0392b; --link: #2980b9;
+    --shadow: rgba(0,0,0,0.08);
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #1e1f22; --fg: #e3e5e8; --card: #2b2d31; --border: #3f4147; --th: #313338;
+    --muted: #9a9ea5; --btn-bg: #383a40; --btn-hover: #43464d; --btn-border: #4e5058;
+    --input-bg: #1e1f22; --primary: #5865f2; --danger: #ff6b5e; --link: #8ab4f8;
+    --shadow: rgba(0,0,0,0.5);
+  }
+  body { background: var(--bg); color: var(--fg); }
+  .theme-btn { cursor: pointer; border: 1px solid var(--btn-border); background: var(--btn-bg); color: var(--fg); border-radius: 4px; padding: 4px 8px; font-size: 14px; }
+  .theme-btn:hover { background: var(--btn-hover); }
+</style>`;
+
+const THEME_BUTTON = `<button type="button" id="themeBtn" class="theme-btn" onclick="toggleTheme()" title="다크모드 전환">🌙</button>`;
 
 function colorHex(color) {
   return "#" + (color ?? 0x2c3e50).toString(16).padStart(6, "0");
@@ -124,31 +171,32 @@ function renderPlayPage(id, user) {
 <head>
 <meta charset="utf-8">
 <title>플레이 테스트 — ${escapeHtml(id)}</title>
+${THEME_HEAD}
 <style>
-  body { font-family: -apple-system, sans-serif; background: #36393f; color: #dcddde; display: flex; justify-content: center; padding: 24px; margin: 0; }
+  body { font-family: -apple-system, sans-serif; display: flex; justify-content: center; padding: 24px; margin: 0; }
   .wrap { width: 420px; max-width: 100%; }
   .topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; font-size: 13px; }
-  .topbar a { color: #8ab4f8; text-decoration: none; }
-  .meta { font-size: 12px; color: #aaa; margin-bottom: 12px; word-break: break-all; }
-  .embed { background: #2f3136; border-left: 4px solid #3498db; border-radius: 4px; padding: 12px 16px; margin-bottom: 12px; }
+  .topbar a { color: var(--link); text-decoration: none; }
+  .meta { font-size: 12px; color: var(--muted); margin-bottom: 12px; word-break: break-all; }
+  .embed { background: var(--card); border: 1px solid var(--border); border-left: 4px solid #3498db; border-radius: 4px; padding: 12px 16px; margin-bottom: 12px; }
   .embed-title { font-weight: 700; margin-bottom: 6px; }
   .embed-desc { font-size: 14px; white-space: pre-wrap; line-height: 1.5; }
   .field { margin-top: 8px; font-size: 13px; }
-  .footer { margin-top: 10px; font-size: 11px; color: #999; }
+  .footer { margin-top: 10px; font-size: 11px; color: var(--muted); }
   .btn-row { display: flex; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
-  button { padding: 8px 14px; border: none; border-radius: 4px; cursor: pointer; background: #4f545c; color: #fff; font-size: 13px; }
-  button:hover { opacity: 0.85; }
-  .style-3 { background: #2ecc71; }
-  .style-4 { background: #e74c3c; }
-  .admin-controls { margin-top: 20px; border-top: 1px solid #444; padding-top: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
-  .admin-controls button { background: #7f8c8d; }
+  button:not(.theme-btn) { padding: 8px 14px; border: none; border-radius: 4px; cursor: pointer; background: #4f545c; color: #fff; font-size: 13px; }
+  button:not(.theme-btn):hover { opacity: 0.85; }
+  .style-3 { background: #2ecc71 !important; }
+  .style-4 { background: #e74c3c !important; }
+  .admin-controls { margin-top: 20px; border-top: 1px solid var(--border); padding-top: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
+  .admin-controls button { background: #7f8c8d !important; }
 </style>
 </head>
 <body>
 <div class="wrap">
   <div class="topbar">
     <a href="/api/admin">← 대시보드로</a>
-    <span>🧪 플레이 테스트</span>
+    <span>🧪 플레이 테스트 ${THEME_BUTTON}</span>
   </div>
   <div class="meta">유저 ID: <code>${escapeHtml(id)}</code> · ${stageInfo}</div>
   ${embedToHtml(view)}
@@ -182,28 +230,38 @@ function renderLoginPage(error) {
 <head>
 <meta charset="utf-8">
 <title>관리자 로그인</title>
+${THEME_HEAD}
 <style>
-  body { font-family: -apple-system, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; background: #fafafa; }
-  .box { background: #fff; padding: 32px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.08); width: 280px; }
+  body { font-family: -apple-system, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+  .box { position: relative; background: var(--card); padding: 32px; border-radius: 8px; box-shadow: 0 2px 10px var(--shadow); width: 280px; }
+  .theme-corner { position: fixed; top: 16px; right: 16px; }
   h1 { font-size: 18px; margin: 0 0 16px; }
-  input { width: 100%; box-sizing: border-box; padding: 8px; margin-bottom: 8px; border: 1px solid #ccc; border-radius: 4px; }
-  button { width: 100%; padding: 8px; border: none; background: #2c3e50; color: #fff; border-radius: 4px; cursor: pointer; }
-  .error { color: #c0392b; font-size: 13px; margin-bottom: 8px; }
-  .forgot { font-size: 12px; margin-top: 12px; color: #888; cursor: pointer; text-decoration: underline; }
-  .forgot-text { display: none; font-size: 12px; color: #888; margin-top: 8px; line-height: 1.5; }
+  input[type="password"] { width: 100%; box-sizing: border-box; padding: 8px; margin-bottom: 8px; border: 1px solid var(--btn-border); border-radius: 4px; background: var(--input-bg); color: var(--fg); }
+  .login-btn { width: 100%; padding: 8px; border: none; background: var(--primary); color: #fff; border-radius: 4px; cursor: pointer; }
+  .remember { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); margin-bottom: 10px; }
+  .error { color: var(--danger); font-size: 13px; margin-bottom: 8px; }
+  .link-btn { background: none; border: none; padding: 0; font-size: 12px; margin-top: 12px; color: var(--muted); cursor: pointer; text-decoration: underline; display: block; }
+  .forgot-text { display: none; font-size: 12px; color: var(--muted); margin-top: 8px; line-height: 1.5; }
 </style>
 </head>
 <body>
+  <div class="theme-corner">${THEME_BUTTON}</div>
   <div class="box">
     <h1>📋 새빛재단 사건부 — 관리자</h1>
     ${error ? `<div class="error">비밀번호가 틀렸어요.</div>` : ""}
     <form method="POST" action="/api/admin">
       <input type="hidden" name="formAction" value="login">
-      <input type="text" name="username" value="admin" autocomplete="username" style="display:none">
+      <!-- 브라우저 비밀번호 관리자가 저장할 수 있도록 사용자명 칸을 (보이지 않게) 둔다. display:none 이면 저장을 제안하지 않는 브라우저가 있다 -->
+      <input type="text" name="username" value="admin" autocomplete="username" tabindex="-1" aria-hidden="true" style="position:absolute;opacity:0;height:0;width:0;pointer-events:none">
       <input type="password" name="password" placeholder="비밀번호" autocomplete="current-password" required autofocus>
-      <button type="submit">로그인</button>
+      <label class="remember"><input type="checkbox" name="remember" value="1" checked> 이 기기에서 30일간 로그인 유지</label>
+      <button type="submit" class="login-btn">로그인</button>
     </form>
-    <div class="forgot" onclick="document.getElementById('forgotText').style.display='block'">비밀번호를 잊으셨나요?</div>
+    <form method="POST" action="/api/admin" style="margin:0">
+      <input type="hidden" name="formAction" value="logout">
+      <button type="submit" class="link-btn">이 기기의 저장된 로그인 잊기</button>
+    </form>
+    <button type="button" class="link-btn" onclick="document.getElementById('forgotText').style.display='block'">비밀번호를 잊으셨나요?</button>
     <div class="forgot-text" id="forgotText">
       이 비밀번호는 서버 환경변수 <code>ADMIN_SECRET</code>에 저장돼 있어요.
       Vercel 대시보드 → 프로젝트 → Settings → Environment Variables 에서
@@ -251,21 +309,24 @@ function renderDashboard(users) {
 <head>
 <meta charset="utf-8">
 <title>새빛재단 사건부 — 관리자</title>
+${THEME_HEAD}
 <style>
-  body { font-family: -apple-system, sans-serif; padding: 24px; background: #fafafa; color: #222; }
+  body { font-family: -apple-system, sans-serif; padding: 24px; }
   h1 { margin-bottom: 4px; display: flex; justify-content: space-between; align-items: center; font-size: 22px; }
-  table { border-collapse: collapse; width: 100%; margin-top: 16px; background: #fff; }
-  th, td { border: 1px solid #ddd; padding: 8px; font-size: 13px; vertical-align: top; text-align: left; }
-  th { background: #f0f0f0; }
+  table { border-collapse: collapse; width: 100%; margin-top: 16px; background: var(--card); }
+  th, td { border: 1px solid var(--border); padding: 8px; font-size: 13px; vertical-align: top; text-align: left; }
+  th { background: var(--th); }
+  code { background: var(--th); padding: 1px 4px; border-radius: 3px; }
   .actions { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; }
-  input[type="number"] { width: 50px; }
-  button { cursor: pointer; border: 1px solid #ccc; background: #fff; border-radius: 4px; padding: 4px 8px; }
-  button:hover { background: #f0f0f0; }
-  .danger { color: #c0392b; border-color: #c0392b; }
-  .play { color: #2980b9; border-color: #2980b9; }
-  .logout { font-size: 13px; color: #888; border: none; background: none; text-decoration: underline; cursor: pointer; }
+  input[type="number"] { width: 50px; background: var(--input-bg); color: var(--fg); border: 1px solid var(--btn-border); border-radius: 4px; }
+  button { cursor: pointer; border: 1px solid var(--btn-border); background: var(--btn-bg); color: var(--fg); border-radius: 4px; padding: 4px 8px; }
+  button:hover { background: var(--btn-hover); }
+  .danger { color: var(--danger); border-color: var(--danger); }
+  .play { color: var(--link); border-color: var(--link); }
+  .logout { font-size: 13px; color: var(--muted); border: none; background: none; text-decoration: underline; cursor: pointer; }
   .header-actions { display: flex; gap: 8px; align-items: center; }
-  .new-test { background: #2c3e50; color: #fff; }
+  .new-test { background: var(--primary); color: #fff; border-color: var(--primary); }
+  .new-test:hover { background: var(--primary); opacity: 0.85; }
 </style>
 </head>
 <body>
@@ -273,9 +334,10 @@ function renderDashboard(users) {
     📋 새빛재단 사건부 — 관리자 페이지
     <div class="header-actions">
       <button class="new-test" onclick="createTestUser()">🧪 테스트 유저 생성</button>
+      ${THEME_BUTTON}
       <form method="POST" action="/api/admin" style="margin:0">
         <input type="hidden" name="formAction" value="logout">
-        <button class="logout" type="submit">로그아웃</button>
+        <button class="logout" type="submit" title="이 기기에 저장된 로그인을 지웁니다">로그아웃 · 저장된 로그인 잊기</button>
       </form>
     </div>
   </h1>
@@ -356,7 +418,10 @@ export async function POST(request) {
           status: 303,
           headers: {
             Location: "/api/admin",
-            "Set-Cookie": setCookieHeader(hashSecret(password), COOKIE_MAX_AGE),
+            "Set-Cookie": setCookieHeader(
+              hashSecret(password),
+              body.get("remember") ? COOKIE_MAX_AGE : null
+            ),
           },
         });
       }
