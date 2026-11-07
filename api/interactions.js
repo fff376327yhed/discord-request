@@ -1,7 +1,15 @@
 import { verifyKey } from "discord-interactions";
-import { QUESTS, COOLDOWN_MS } from "../lib/quests.js";
+import { STEPS, COOLDOWN_MS } from "../lib/quests.js";
 import { getUser, saveUser, acquireLock, releaseLock } from "../lib/db.js";
-import { FLAGS, questView, clearedView, profileView, messageOnly } from "../lib/views.js";
+import {
+  FLAGS,
+  introView,
+  stepView,
+  clearedView,
+  choiceResultView,
+  profileView,
+  messageOnly,
+} from "../lib/views.js";
 
 // Discord 응답 타입
 const PONG = 1;
@@ -42,7 +50,9 @@ export async function POST(request) {
       const user = await getUser(userId);
       switch (interaction.data.name) {
         case "의뢰":
-          return reply(questView(user));
+          // 최초 1회: 세계관 + 해결사 소개부터 보여준다
+          if (!user.introSeen) return reply(introView());
+          return reply(stepView(user));
         case "내정보":
           return reply(profileView(user, discordUser.global_name ?? discordUser.username));
         default:
@@ -52,8 +62,7 @@ export async function POST(request) {
 
     // 4) 버튼 클릭
     if (interaction.type === 3) {
-      const [action, stageStr] = interaction.data.custom_id.split(":");
-      const stage = Number(stageStr);
+      const [action, stageStr, value] = interaction.data.custom_id.split(":");
 
       // 연타 방지
       if (!(await acquireLock(userId))) {
@@ -63,32 +72,59 @@ export async function POST(request) {
       try {
         const user = await getUser(userId);
 
-        // 오래된 메시지의 버튼을 눌렀을 때 (이미 진행된 의뢰)
-        if (user.stage !== stage) return update(questView(user));
+        // 인트로 화면의 "의뢰서 펼치기" 버튼
+        if (action === "intro") {
+          if (user.introSeen) return update(stepView(user));
+          user.introSeen = true;
+          await saveUser(userId, user);
+          return update(stepView(user));
+        }
+
+        const stage = Number(stageStr);
+
+        // 오래된 메시지의 버튼을 눌렀을 때 (이미 진행된 단계)
+        if (user.stage !== stage) return update(stepView(user));
 
         // 의뢰 수락
         if (action === "accept") {
-          if (user.status !== "ready" || Date.now() < user.nextAt) return update(questView(user));
+          if (user.status !== "ready" || Date.now() < user.nextAt) return update(stepView(user));
           user.status = "active";
           await saveUser(userId, user);
-          return update(questView(user));
+          return update(stepView(user));
         }
 
         // 의뢰 완료 → 보상 지급 → 10분 대기 시작
         if (action === "complete") {
-          if (user.status !== "active") return update(questView(user));
-          const quest = QUESTS[user.stage];
+          if (user.status !== "active") return update(stepView(user));
+          const step = STEPS[user.stage];
 
-          user.gold += quest.reward.gold;
-          if (quest.reward.title && !user.titles.includes(quest.reward.title)) {
-            user.titles.push(quest.reward.title);
+          user.gold += step.reward.gold;
+          if (step.reward.title && !user.titles.includes(step.reward.title)) {
+            user.titles.push(step.reward.title);
           }
           user.stage += 1;
           user.status = "ready";
           user.nextAt = Date.now() + COOLDOWN_MS;
 
           await saveUser(userId, user);
-          return update(clearedView(quest, user));
+          return update(clearedView(step, user));
+        }
+
+        // 분기 선택 → flag 저장 → 바로 다음 단계로 (쿨다운 없음)
+        if (action === "choose") {
+          const step = STEPS[user.stage];
+          if (!step || step.type !== "choice") return update(stepView(user));
+
+          const option = step.options.find((o) => o.value === value);
+          if (!option) return update(stepView(user));
+
+          user.flags[step.flagKey] = value;
+          user.stage += 1;
+          user.status = "ready";
+          user.nextAt = Date.now();
+
+          await saveUser(userId, user);
+          return update(choiceResultView(option));
         }
       } finally {
         await releaseLock(userId);
