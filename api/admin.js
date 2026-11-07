@@ -98,7 +98,7 @@ function buttonsToHtml(view) {
 
 // ── 플레이 테스트 화면 ──────────────────────────────
 function renderPlayPage(id, user) {
-  const view = !user.introSeen ? introView() : stepView(user);
+  const view = !user.introSeen ? introView(0, true) : stepView(user, { full: true });
   const stageInfo =
     user.stage >= STEPS.length
       ? "사건 종결"

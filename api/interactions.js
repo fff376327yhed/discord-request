@@ -9,6 +9,7 @@ import {
   choiceResultView,
   profileView,
   messageOnly,
+  pageView,
 } from "../lib/views.js";
 
 // Discord 응답 타입
@@ -63,6 +64,13 @@ export async function POST(request) {
     // 4) 버튼 클릭
     if (interaction.type === 3) {
       const [action, stageStr, value] = interaction.data.custom_id.split(":");
+
+      // 긴 글의 "다음 ▶ / ◀ 이전 쪽" 버튼: 진행 상태를 바꾸지 않으니 잠금 없이 바로 화면만 바꿔준다.
+      if (action === "pg") {
+        const user = await getUser(userId);
+        if (user.stage !== Number(stageStr)) return update(stepView(user));
+        return update(pageView(user, value));
+      }
 
       // 연타 방지
       if (!(await acquireLock(userId))) {
