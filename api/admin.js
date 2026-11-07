@@ -1,11 +1,38 @@
-// 실제 경로 예상: app/api/admin/route.js
-// 접속: https://<도메인>/api/admin?key=<ADMIN_SECRET 환경변수 값>
-// (프로젝트 구조에 맞게 아래 import 경로의 "../../lib/..." 깊이만 조정하세요)
+// interactions.js와 같은 폴더에 두세요 (예: api/admin.js)
+// 접속: https://<도메인>/api/admin  (쿼리에 키 안 붙여도 됨 — 로그인 폼으로 들어감)
+import crypto from "node:crypto";
 import { getUser, saveUser, listUsers, resetUser } from "../lib/db.js";
 import { STEPS } from "../lib/quests.js";
 
-function isAuthorized(key) {
-  return Boolean(process.env.ADMIN_SECRET) && key === process.env.ADMIN_SECRET;
+const COOKIE_NAME = "admin_token";
+const COOKIE_MAX_AGE = 60 * 60 * 24 * 30; // 30일 — 이게 "로그인 유지" 역할
+
+function hashSecret(secret) {
+  return crypto.createHash("sha256").update(secret).digest("hex");
+}
+
+function parseCookies(request) {
+  const header = request.headers.get("cookie") || "";
+  return Object.fromEntries(
+    header
+      .split(";")
+      .map((c) => c.trim())
+      .filter(Boolean)
+      .map((c) => {
+        const idx = c.indexOf("=");
+        return [c.slice(0, idx), c.slice(idx + 1)];
+      })
+  );
+}
+
+function isLoggedIn(request) {
+  if (!process.env.ADMIN_SECRET) return false;
+  const cookies = parseCookies(request);
+  return cookies[COOKIE_NAME] === hashSecret(process.env.ADMIN_SECRET);
+}
+
+function setCookieHeader(value, maxAge) {
+  return `${COOKIE_NAME}=${value}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`;
 }
 
 function escapeHtml(str) {
@@ -15,7 +42,47 @@ function escapeHtml(str) {
   );
 }
 
-function renderPage(users, key) {
+// ── 로그인 화면 ──────────────────────────────
+function renderLoginPage(error) {
+  return `<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>관리자 로그인</title>
+<style>
+  body { font-family: -apple-system, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; background: #fafafa; }
+  .box { background: #fff; padding: 32px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.08); width: 280px; }
+  h1 { font-size: 18px; margin: 0 0 16px; }
+  input { width: 100%; box-sizing: border-box; padding: 8px; margin-bottom: 8px; border: 1px solid #ccc; border-radius: 4px; }
+  button { width: 100%; padding: 8px; border: none; background: #2c3e50; color: #fff; border-radius: 4px; cursor: pointer; }
+  .error { color: #c0392b; font-size: 13px; margin-bottom: 8px; }
+  .forgot { font-size: 12px; margin-top: 12px; color: #888; cursor: pointer; text-decoration: underline; }
+  .forgot-text { display: none; font-size: 12px; color: #888; margin-top: 8px; line-height: 1.5; }
+</style>
+</head>
+<body>
+  <div class="box">
+    <h1>🦋 나비재단 사건부 — 관리자</h1>
+    ${error ? `<div class="error">비밀번호가 틀렸어요.</div>` : ""}
+    <form method="POST" action="/api/admin">
+      <input type="hidden" name="formAction" value="login">
+      <input type="text" name="username" value="admin" autocomplete="username" style="display:none">
+      <input type="password" name="password" placeholder="비밀번호" autocomplete="current-password" required autofocus>
+      <button type="submit">로그인</button>
+    </form>
+    <div class="forgot" onclick="document.getElementById('forgotText').style.display='block'">비밀번호를 잊으셨나요?</div>
+    <div class="forgot-text" id="forgotText">
+      이 비밀번호는 서버 환경변수 <code>ADMIN_SECRET</code>에 저장돼 있어요.
+      Vercel 대시보드 → 프로젝트 → Settings → Environment Variables 에서
+      직접 확인하거나 새 값으로 바꿀 수 있어요. (이메일 재설정 같은 기능은 없어요)
+    </div>
+  </div>
+</body>
+</html>`;
+}
+
+// ── 대시보드 화면 ──────────────────────────────
+function renderDashboard(users) {
   const rows = users
     .map((u) => {
       const ended = u.stage >= STEPS.length;
@@ -50,7 +117,7 @@ function renderPage(users, key) {
 <title>나비재단 사건부 — 관리자</title>
 <style>
   body { font-family: -apple-system, sans-serif; padding: 24px; background: #fafafa; color: #222; }
-  h1 { margin-bottom: 4px; }
+  h1 { margin-bottom: 4px; display: flex; justify-content: space-between; align-items: center; font-size: 22px; }
   table { border-collapse: collapse; width: 100%; margin-top: 16px; background: #fff; }
   th, td { border: 1px solid #ddd; padding: 8px; font-size: 13px; vertical-align: top; text-align: left; }
   th { background: #f0f0f0; }
@@ -59,10 +126,17 @@ function renderPage(users, key) {
   button { cursor: pointer; border: 1px solid #ccc; background: #fff; border-radius: 4px; padding: 4px 8px; }
   button:hover { background: #f0f0f0; }
   .danger { color: #c0392b; border-color: #c0392b; }
+  .logout { font-size: 13px; color: #888; border: none; background: none; text-decoration: underline; cursor: pointer; }
 </style>
 </head>
 <body>
-  <h1>🦋 나비재단 사건부 — 관리자 페이지</h1>
+  <h1>
+    🦋 나비재단 사건부 — 관리자 페이지
+    <form method="POST" action="/api/admin" style="margin:0">
+      <input type="hidden" name="formAction" value="logout">
+      <button class="logout" type="submit">로그아웃</button>
+    </form>
+  </h1>
   <p>전체 단계 수: <b>${STEPS.length}</b> · 접속 유저 수: <b>${users.length}</b></p>
   <table>
     <thead>
@@ -74,10 +148,8 @@ function renderPage(users, key) {
   </table>
 
 <script>
-  const KEY = ${JSON.stringify(key)};
-
   async function act(userId, action, extra) {
-    await fetch('/api/admin?key=' + encodeURIComponent(KEY), {
+    await fetch('/api/admin', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(Object.assign({ userId, action }, extra || {})),
@@ -95,32 +167,63 @@ function renderPage(users, key) {
 }
 
 export async function GET(request) {
-  const url = new URL(request.url);
-  const key = url.searchParams.get("key");
-
-  if (!isAuthorized(key)) {
-    return new Response("🔒 접근 권한이 없어요. 주소 끝에 ?key=관리자키 를 붙여서 접속해 주세요.", {
-      status: 401,
-      headers: { "Content-Type": "text/plain; charset=utf-8" },
+  if (!isLoggedIn(request)) {
+    return new Response(renderLoginPage(false), {
+      headers: { "Content-Type": "text/html; charset=utf-8" },
     });
   }
 
   const users = await listUsers();
-  return new Response(renderPage(users, key), {
+  return new Response(renderDashboard(users), {
     headers: { "Content-Type": "text/html; charset=utf-8" },
   });
 }
 
+// 로그인 / 로그아웃 폼 제출 + (fetch로 오는) 유저 조작 액션을 한 파일에서 같이 처리
 export async function POST(request) {
-  const url = new URL(request.url);
-  const key = url.searchParams.get("key");
+  const contentType = request.headers.get("content-type") || "";
 
-  if (!isAuthorized(key)) {
+  // 로그인/로그아웃 폼은 일반 form submit (application/x-www-form-urlencoded)
+  if (contentType.includes("application/x-www-form-urlencoded")) {
+    const body = new URLSearchParams(await request.text());
+    const formAction = body.get("formAction");
+
+    if (formAction === "login") {
+      const password = body.get("password") || "";
+      if (process.env.ADMIN_SECRET && password === process.env.ADMIN_SECRET) {
+        return new Response(null, {
+          status: 303,
+          headers: {
+            Location: "/api/admin",
+            "Set-Cookie": setCookieHeader(hashSecret(password), COOKIE_MAX_AGE),
+          },
+        });
+      }
+      return new Response(renderLoginPage(true), {
+        status: 401,
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+      });
+    }
+
+    if (formAction === "logout") {
+      return new Response(null, {
+        status: 303,
+        headers: {
+          Location: "/api/admin",
+          "Set-Cookie": setCookieHeader("", 0),
+        },
+      });
+    }
+
+    return new Response("unknown form action", { status: 400 });
+  }
+
+  // 그 외(JSON)는 대시보드 버튼에서 fetch로 보내는 유저 조작 — 로그인 쿠키 필요
+  if (!isLoggedIn(request)) {
     return new Response("unauthorized", { status: 401 });
   }
 
   const { userId, action, stage, flags } = await request.json();
-
   if (!userId) return new Response("userId 누락", { status: 400 });
 
   if (action === "reset") {
