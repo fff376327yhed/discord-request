@@ -86,9 +86,9 @@ function buttonsToHtml(view) {
           } else {
             stage = part1; // accept / complete
           }
-          return `<button class="style-${btn.style}" onclick="playAct(${JSON.stringify(
+          return `<button class="style-${btn.style}" onclick='playAct(${JSON.stringify(
             realAction
-          )}, ${JSON.stringify(stage)}, ${JSON.stringify(value)})">${escapeHtml(btn.label)}</button>`;
+          )}, ${JSON.stringify(stage)}, ${JSON.stringify(value)})'>${escapeHtml(btn.label)}</button>`;
         })
         .join("");
       return `<div class="btn-row">${buttons}</div>`;
