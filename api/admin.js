@@ -1,8 +1,8 @@
 // 실제 경로 예상: app/api/admin/route.js
 // 접속: https://<도메인>/api/admin?key=<ADMIN_SECRET 환경변수 값>
 // (프로젝트 구조에 맞게 아래 import 경로의 "../../lib/..." 깊이만 조정하세요)
-import { getUser, saveUser, listUsers, resetUser } from "../../lib/db.js";
-import { STEPS } from "../../lib/quests.js";
+import { getUser, saveUser, listUsers, resetUser } from "../lib/db.js";
+import { STEPS } from "../lib/quests.js";
 
 function isAuthorized(key) {
   return Boolean(process.env.ADMIN_SECRET) && key === process.env.ADMIN_SECRET;
