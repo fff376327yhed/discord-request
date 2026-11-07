@@ -135,7 +135,7 @@ function renderPlayPage(id, user) {
     <a href="/api/admin">← 대시보드로</a>
     <span>🧪 플레이 테스트</span>
   </div>
-  <div class="meta">유저 ID: <code>${escapeHtml(id)}</code> · ${stageInfo} · 골드 ${user.gold}</div>
+  <div class="meta">유저 ID: <code>${escapeHtml(id)}</code> · ${stageInfo}</div>
   ${embedToHtml(view)}
   ${buttonsToHtml(view)}
   <div class="admin-controls">
@@ -209,8 +209,6 @@ function renderDashboard(users) {
         <td>${escapeHtml(u.id)}</td>
         <td>${u.stage} / ${STEPS.length}<br><small>${escapeHtml(title)}</small></td>
         <td>${u.status}</td>
-        <td>${u.gold}</td>
-        <td>${u.titles?.length ? escapeHtml(u.titles.join(", ")) : "-"}</td>
         <td><code>${escapeHtml(JSON.stringify(u.flags))}</code></td>
         <td>
           <div class="actions">
@@ -264,10 +262,10 @@ function renderDashboard(users) {
   <table>
     <thead>
       <tr>
-        <th>유저 ID</th><th>단계</th><th>상태</th><th>골드</th><th>칭호</th><th>flags</th><th>관리</th>
+        <th>유저 ID</th><th>단계</th><th>상태</th><th>flags</th><th>관리</th>
       </tr>
     </thead>
-    <tbody>${rows || `<tr><td colspan="7">아직 아무도 시작하지 않았어요.</td></tr>`}</tbody>
+    <tbody>${rows || `<tr><td colspan="5">아직 아무도 시작하지 않았어요.</td></tr>`}</tbody>
   </table>
 
 <script>
@@ -416,10 +414,6 @@ export async function POST(request) {
       if (user.status !== "active") break;
       const step = STEPS[user.stage];
       if (step?.type === "quest") {
-        user.gold += step.reward.gold;
-        if (step.reward.title && !user.titles.includes(step.reward.title)) {
-          user.titles.push(step.reward.title);
-        }
         user.stage += 1;
         user.status = "ready";
       }

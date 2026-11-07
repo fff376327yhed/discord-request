@@ -93,15 +93,11 @@ export async function POST(request) {
           return update(stepView(user));
         }
 
-        // 의뢰 완료 → 보상 지급 → 바로 다음 의뢰 오픈 (쿨다운 없음)
+        // 의뢰 완료 → 바로 다음 의뢰 오픈 (쿨다운 없음, 보상 없음)
         if (action === "complete") {
           if (user.status !== "active") return update(stepView(user));
           const step = STEPS[user.stage];
 
-          user.gold += step.reward.gold;
-          if (step.reward.title && !user.titles.includes(step.reward.title)) {
-            user.titles.push(step.reward.title);
-          }
           user.stage += 1;
           user.status = "ready";
 
