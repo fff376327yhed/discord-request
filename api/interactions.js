@@ -1,7 +1,13 @@
 import { verifyKey } from "discord-interactions";
-import { STEPS, applyQuestClear, applyChoice, availableOptions } from "../lib/quests.js";
-import { getUser, saveUser, acquireLock, releaseLock } from "../lib/db.js";
 import {
+  STEPS,
+  applyQuestClear,
+  applyChoice,
+  availableOptions,
+  getUser,
+  saveUser,
+  acquireLock,
+  releaseLock,
   FLAGS,
   introView,
   stepView,
@@ -10,12 +16,14 @@ import {
   profileView,
   messageOnly,
   pageView,
-} from "../lib/views.js";
+  restartUser,
+} from "../lib/game.js";
 
 // Discord 응답 타입
 const PONG = 1;
 const CHANNEL_MESSAGE = 4; // 새 메시지
 const UPDATE_MESSAGE = 7; // 버튼이 달린 기존 메시지 수정
+const DEFERRED_UPDATE = 6; // 화면은 그대로 두고 조용히 응답 완료
 
 const json = (body) =>
   new Response(JSON.stringify(body), { headers: { "Content-Type": "application/json" } });
@@ -31,9 +39,12 @@ export async function POST(request) {
   const timestamp = request.headers.get("x-signature-timestamp");
   const rawBody = await request.text();
 
+  // 5분 넘게 지난(또는 미래의) 요청은 가로챈 요청을 다시 보낸 것일 수 있어 거절한다.
+  const ageSec = Math.abs(Date.now() / 1000 - Number(timestamp));
   const isValid =
     signature &&
     timestamp &&
+    ageSec <= 300 &&
     (await verifyKey(rawBody, signature, timestamp, process.env.DISCORD_PUBLIC_KEY));
   if (!isValid) return new Response("invalid request signature", { status: 401 });
 
@@ -74,7 +85,8 @@ export async function POST(request) {
 
       // 연타 방지
       if (!(await acquireLock(userId))) {
-        return update(messageOnly("처리 중이에요. 잠시 후 다시 시도해 주세요."));
+        // 화면을 글자로 덮어쓰면 버튼이 사라진다. 그냥 아무 일도 없던 것처럼 넘긴다.
+        return json({ type: DEFERRED_UPDATE });
       }
 
       try {
@@ -92,6 +104,14 @@ export async function POST(request) {
 
         // 오래된 메시지의 버튼을 눌렀을 때 (이미 진행된 단계)
         if (user.stage !== stage) return update(stepView(user));
+
+        // 엔딩 화면의 "처음부터 다시 시작한다" (결말에 닿은 유저만)
+        if (action === "restart") {
+          if (!user.dead && user.stage < STEPS.length) return update(stepView(user));
+          const fresh = restartUser(user);
+          await saveUser(userId, fresh);
+          return update(stepView(fresh));
+        }
 
         // 다음 장면으로 (결과 화면의 "다음 의뢰서를 펼친다" 버튼)
         if (action === "next") return update(stepView(user));

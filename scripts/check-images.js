@@ -3,8 +3,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { STEPS } from "../lib/quests.js";
-import { IMAGE_EXT } from "../lib/images.js";
+import {
+  STEPS,
+  ENDINGS,
+  IMAGE_EXT,
+} from "../lib/game.js";
 
 const dir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "public", "story");
 const wanted = new Map(); // id -> 어디에 쓰이는지
@@ -14,6 +17,7 @@ const add = (id, where) => {
 };
 
 add("intro", "인트로 화면");
+for (const e of Object.values(ENDINGS)) add(e.image, `엔딩 · ${e.title}`);
 STEPS.forEach((step, i) => {
   const label = `${i + 1}번 · ${step.title}`;
   add(step.image, `${label} (장면)`);

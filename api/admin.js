@@ -1,9 +1,22 @@
 // interactions.js와 같은 폴더에 두세요 (예: api/admin.js)
 // 접속: https://<도메인>/api/admin  (쿼리에 키 안 붙여도 됨 — 로그인 폼으로 들어감)
 import crypto from "node:crypto";
-import { getUser, saveUser, listUsers, resetUser, deleteUser, newUser } from "../lib/db.js";
-import { STEPS, applyQuestClear, applyChoice, availableOptions } from "../lib/quests.js";
-import { introView, stepView } from "../lib/views.js";
+import {
+  getUser,
+  saveUser,
+  listUsers,
+  resetUser,
+  deleteUser,
+  newUser,
+  STEPS,
+  applyQuestClear,
+  applyChoice,
+  availableOptions,
+  introView,
+  stepView,
+  reviveUser,
+  restartUser,
+} from "../lib/game.js";
 
 const COOKIE_NAME = "admin_token";
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 30; // 30일 — 이게 "로그인 유지" 역할
@@ -100,7 +113,9 @@ function buttonsToHtml(view) {
 function renderPlayPage(id, user) {
   const view = !user.introSeen ? introView(0, true) : stepView(user, { full: true });
   const stageInfo =
-    user.stage >= STEPS.length
+    user.dead
+      ? `💀 사망 (${user.dead}) · 체력 ${user.hp}`
+      : user.stage >= STEPS.length
       ? "사건 종결"
       : `${user.stage + 1} / ${STEPS.length} 단계 · ${user.status === "active" ? "진행 중" : "대기"}`;
 
@@ -141,6 +156,7 @@ function renderPlayPage(id, user) {
   <div class="admin-controls">
     <button onclick="playAct('rewind')">◀ 강제 이전</button>
     <button onclick="playAct('advance')">강제 다음 ▶</button>
+    <button onclick="playAct('revive')">💀 부활</button>
     <button onclick="if(confirm('정말 초기화할까요?')) playAct('reset')">초기화</button>
   </div>
 </div>
@@ -179,7 +195,7 @@ function renderLoginPage(error) {
 </head>
 <body>
   <div class="box">
-    <h1>🦋 나비재단 사건부 — 관리자</h1>
+    <h1>📋 새빛재단 사건부 — 관리자</h1>
     ${error ? `<div class="error">비밀번호가 틀렸어요.</div>` : ""}
     <form method="POST" action="/api/admin">
       <input type="hidden" name="formAction" value="login">
@@ -203,7 +219,11 @@ function renderDashboard(users) {
   const rows = users
     .map((u) => {
       const ended = u.stage >= STEPS.length;
-      const title = ended ? "— 사건 종결 —" : STEPS[u.stage]?.title ?? "-";
+      const title = u.dead
+        ? `— 💀 사망: ${u.dead} (체력 ${u.hp}) —`
+        : ended
+          ? "— 사건 종결 —"
+          : `${STEPS[u.stage]?.title ?? "-"} (체력 ${u.hp ?? 10})`;
       return `
       <tr>
         <td>${escapeHtml(u.id)}</td>
@@ -215,6 +235,7 @@ function renderDashboard(users) {
             <a href="/api/admin?play=${encodeURIComponent(u.id)}" target="_blank"><button type="button" class="play">▶ 플레이</button></a>
             <button onclick="act('${u.id}','rewind')">◀ 이전</button>
             <button onclick="act('${u.id}','advance')">다음 ▶</button>
+            ${u.dead ? `<button onclick="act('${u.id}','revive')">💀 부활</button>` : ""}
             <input type="number" id="stage-${u.id}" value="${u.stage}">
             <button onclick="setStage('${u.id}')">지정</button>
             <button class="danger" onclick="if(confirm('정말 초기화할까요?')) act('${u.id}','reset')">초기화</button>
@@ -229,7 +250,7 @@ function renderDashboard(users) {
 <html lang="ko">
 <head>
 <meta charset="utf-8">
-<title>나비재단 사건부 — 관리자</title>
+<title>새빛재단 사건부 — 관리자</title>
 <style>
   body { font-family: -apple-system, sans-serif; padding: 24px; background: #fafafa; color: #222; }
   h1 { margin-bottom: 4px; display: flex; justify-content: space-between; align-items: center; font-size: 22px; }
@@ -249,7 +270,7 @@ function renderDashboard(users) {
 </head>
 <body>
   <h1>
-    🦋 나비재단 사건부 — 관리자 페이지
+    📋 새빛재단 사건부 — 관리자 페이지
     <div class="header-actions">
       <button class="new-test" onclick="createTestUser()">🧪 테스트 유저 생성</button>
       <form method="POST" action="/api/admin" style="margin:0">
@@ -387,15 +408,24 @@ export async function POST(request) {
   const user = await getUser(userId);
 
   switch (action) {
+    case "restart":
+      Object.assign(user, restartUser(user));
+      break;
+    case "revive":
+      reviveUser(user);
+      break;
     case "advance":
+      if (user.dead) reviveUser(user); // 사망 상태에서 단계를 옮기면 엔딩 화면에 갇히므로 함께 풀어준다
       user.stage = Math.min(user.stage + 1, STEPS.length);
       user.status = "ready";
       break;
     case "rewind":
+      if (user.dead) reviveUser(user);
       user.stage = Math.max(user.stage - 1, 0);
       user.status = "ready";
       break;
     case "setStage":
+      if (user.dead) reviveUser(user);
       user.stage = Math.max(0, Math.min(Number(stage), STEPS.length));
       user.status = "ready";
       break;
