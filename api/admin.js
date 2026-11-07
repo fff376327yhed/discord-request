@@ -2,7 +2,7 @@
 // 접속: https://<도메인>/api/admin  (쿼리에 키 안 붙여도 됨 — 로그인 폼으로 들어감)
 import crypto from "node:crypto";
 import { getUser, saveUser, listUsers, resetUser, deleteUser, newUser } from "../lib/db.js";
-import { STEPS } from "../lib/quests.js";
+import { STEPS, applyQuestClear, applyChoice, availableOptions } from "../lib/quests.js";
 import { introView, stepView } from "../lib/views.js";
 
 const COOKIE_NAME = "admin_token";
@@ -67,7 +67,7 @@ function embedToHtml(view) {
     </div>`;
 }
 
-// custom_id("accept:0", "choose:4:A", "intro:start")를 실제 관리자 액션으로 변환해 버튼 렌더링
+// custom_id("complete:0", "choose:4:A", "intro:start")를 실제 관리자 액션으로 변환해 버튼 렌더링
 function buttonsToHtml(view) {
   const rows = view.components || [];
   return rows
@@ -84,7 +84,7 @@ function buttonsToHtml(view) {
             stage = part1;
             value = part2;
           } else {
-            stage = part1; // accept / complete
+            stage = part1; // complete / next
           }
           return `<button class="style-${btn.style}" onclick='playAct(${JSON.stringify(
             realAction
@@ -209,7 +209,7 @@ function renderDashboard(users) {
         <td>${escapeHtml(u.id)}</td>
         <td>${u.stage} / ${STEPS.length}<br><small>${escapeHtml(title)}</small></td>
         <td>${u.status}</td>
-        <td><code>${escapeHtml(JSON.stringify(u.flags))}</code></td>
+        <td><code>${escapeHtml(JSON.stringify(u.flags))}</code><br><small>단서: ${escapeHtml((u.clues ?? []).join(", ") || "-")}</small></td>
         <td>
           <div class="actions">
             <a href="/api/admin?play=${encodeURIComponent(u.id)}" target="_blank"><button type="button" class="play">▶ 플레이</button></a>
@@ -407,27 +407,18 @@ export async function POST(request) {
     case "introStart":
       user.introSeen = true;
       break;
-    case "accept":
-      if (user.status === "ready") user.status = "active";
+    case "next":
       break;
     case "complete": {
-      if (user.status !== "active") break;
       const step = STEPS[user.stage];
-      if (step?.type === "quest") {
-        user.stage += 1;
-        user.status = "ready";
-      }
+      if (step?.type === "quest") applyQuestClear(user, step);
       break;
     }
     case "choose": {
       const step = STEPS[user.stage];
       if (step?.type === "choice") {
-        const option = step.options.find((o) => o.value === value);
-        if (option) {
-          user.flags[step.flagKey] = value;
-          user.stage += 1;
-          user.status = "ready";
-        }
+        const option = availableOptions(step, user).find((o) => o.value === value);
+        if (option) applyChoice(user, step, option);
       }
       break;
     }

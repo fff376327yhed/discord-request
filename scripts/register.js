@@ -10,7 +10,7 @@ if (!DISCORD_APP_ID || !DISCORD_BOT_TOKEN) {
 
 const commands = [
   { name: "의뢰", description: "의뢰소에서 현재 의뢰를 확인하고 진행합니다", type: 1 },
-  { name: "내정보", description: "내 골드, 칭호, 의뢰 진행 상황을 확인합니다", type: 1 },
+  { name: "내정보", description: "내 의뢰 진행 상황과 모은 단서를 확인합니다", type: 1 },
 ];
 
 // 길드 ID를 넣으면 해당 서버에 즉시 반영, 없으면 전역 등록(반영까지 시간이 걸릴 수 있음)

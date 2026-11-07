@@ -1,5 +1,5 @@
 import { verifyKey } from "discord-interactions";
-import { STEPS } from "../lib/quests.js";
+import { STEPS, applyQuestClear, applyChoice, availableOptions } from "../lib/quests.js";
 import { getUser, saveUser, acquireLock, releaseLock } from "../lib/db.js";
 import {
   FLAGS,
@@ -85,41 +85,33 @@ export async function POST(request) {
         // 오래된 메시지의 버튼을 눌렀을 때 (이미 진행된 단계)
         if (user.stage !== stage) return update(stepView(user));
 
-        // 의뢰 수락
-        if (action === "accept") {
-          if (user.status !== "ready") return update(stepView(user));
-          user.status = "active";
-          await saveUser(userId, user);
-          return update(stepView(user));
-        }
+        // 다음 장면으로 (결과 화면의 "다음 의뢰서를 펼친다" 버튼)
+        if (action === "next") return update(stepView(user));
 
-        // 의뢰 완료 → 바로 다음 의뢰 오픈 (쿨다운 없음, 보상 없음)
+        // 행동 버튼 → 단서 획득 + 결과 서술 화면 (쿨다운 없음, 보상 없음)
         if (action === "complete") {
-          if (user.status !== "active") return update(stepView(user));
           const step = STEPS[user.stage];
+          if (!step || step.type !== "quest") return update(stepView(user));
 
-          user.stage += 1;
-          user.status = "ready";
+          applyQuestClear(user, step);
 
           await saveUser(userId, user);
           return update(clearedView(step, user));
         }
 
-        // 분기 선택 → flag 저장 → 바로 다음 단계로 (쿨다운 없음)
+        // 분기 선택 → flag/단서 저장 → 결과 서술 화면 (쿨다운 없음)
+        // 조건(requires)을 만족하지 못한 선택지는 availableOptions 에서 걸러진다.
         if (action === "choose") {
           const step = STEPS[user.stage];
           if (!step || step.type !== "choice") return update(stepView(user));
 
-          const option = step.options.find((o) => o.value === value);
+          const option = availableOptions(step, user).find((o) => o.value === value);
           if (!option) return update(stepView(user));
 
-          user.flags[step.flagKey] = value;
-          user.stage += 1;
-          user.status = "ready";
-          user.nextAt = Date.now();
+          applyChoice(user, step, option);
 
           await saveUser(userId, user);
-          return update(choiceResultView(option));
+          return update(choiceResultView(option, user));
         }
       } finally {
         await releaseLock(userId);
