@@ -1,0 +1,19 @@
+# .github/workflows/check-images.yml 에 넣으세요.
+# 이미지 누락 체크를 수동 실행이 아니라, push/PR 때마다 자동으로 돌려서
+# "이미지 안 넣고 배포" 하는 실수를 미리 막아줍니다.
+name: Check story images
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check-images:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: node scripts/check-images.js --ci

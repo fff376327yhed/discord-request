@@ -149,6 +149,10 @@ export async function POST(request) {
     return reply(messageOnly("처리할 수 없는 요청이에요."));
   } catch (err) {
     console.error(err);
-    return reply(messageOnly("오류가 발생했어요. 잠시 후 다시 시도해 주세요."));
+    // DB(Upstash) 쪽 문제인지 게임 로직 문제인지 구분해서 다른 안내를 준다.
+    const message = err?.isRedisError
+      ? "저장소 연결이 불안정해요. 잠시 후 다시 `/의뢰` 를 눌러주세요. (방금 누른 버튼은 반영되지 않았을 수 있어요)"
+      : "오류가 발생했어요. 잠시 후 다시 시도해 주세요.";
+    return reply(messageOnly(message));
   }
 }

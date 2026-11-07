@@ -16,7 +16,20 @@ import {
   stepView,
   reviveUser,
   restartUser,
+  computeChoiceStats,
+  computeEndingStats,
 } from "../lib/game.js";
+
+// 분기(flags)로 저장될 수 있는 값들. 스토리 본문(REST, quests.js 규칙 엔진)과 맞춰서 관리한다.
+// 여기 없는 키/값 조합이 생기면 — 즉 스토리에 flagKey 나 option.value 를 추가하면 — 여기도 같이 늘려줘야 flags 편집 UI에 나타난다.
+const FLAG_CHOICES = {
+  approach: ["P", "Q", "R"],
+  trust: ["A", "B", "C"],
+  risk: ["S", "T", "U"],
+  self: ["W", "X"],
+  method: ["D", "E", "F", "G"],
+  final: ["H", "I", "J", "K"],
+};
 
 const COOKIE_NAME = "admin_token";
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 30; // 30일 — 이게 "로그인 유지" 역할
@@ -156,6 +169,19 @@ function buttonsToHtml(view) {
     .join("");
 }
 
+// flags 편집 폼에 쓸 <select> 한 줄. 지금 값이 목록에 없는 값(예: 예전 스토리의 흔적)이어도 깨지지 않게 옵션으로 끼워 넣는다.
+function flagSelect(key, current) {
+  const choices = FLAG_CHOICES[key] ?? [];
+  const options = [
+    `<option value="">(미지정)</option>`,
+    ...choices.map((v) => `<option value="${v}" ${v === current ? "selected" : ""}>${v}</option>`),
+  ];
+  if (current && !choices.includes(current)) {
+    options.push(`<option value="${escapeHtml(current)}" selected>${escapeHtml(current)} (알 수 없는 값)</option>`);
+  }
+  return `<label class="flag-field">${key}<select id="flag-${key}">${options.join("")}</select></label>`;
+}
+
 // ── 플레이 테스트 화면 ──────────────────────────────
 function renderPlayPage(id, user) {
   const view = !user.introSeen ? introView(0, true) : stepView(user, { full: true });
@@ -165,6 +191,9 @@ function renderPlayPage(id, user) {
       : user.stage >= STEPS.length
       ? "사건 종결"
       : `${user.stage + 1} / ${STEPS.length} 단계 · ${user.status === "active" ? "진행 중" : "대기"}`;
+  const flagsHtml = Object.keys(FLAG_CHOICES)
+    .map((key) => flagSelect(key, user.flags?.[key] ?? null))
+    .join("");
 
   return `<!doctype html>
 <html lang="ko">
@@ -190,6 +219,12 @@ ${THEME_HEAD}
   .style-4 { background: #e74c3c !important; }
   .admin-controls { margin-top: 20px; border-top: 1px solid var(--border); padding-top: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
   .admin-controls button { background: #7f8c8d !important; }
+  .flags-box { margin-top: 20px; border-top: 1px solid var(--border); padding-top: 12px; }
+  .flags-box h3 { font-size: 13px; margin: 0 0 8px; color: var(--muted); font-weight: 600; }
+  .flags-grid { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; }
+  .flag-field { display: flex; flex-direction: column; font-size: 11px; color: var(--muted); gap: 2px; }
+  .flag-field select { background: var(--input-bg); color: var(--fg); border: 1px solid var(--btn-border); border-radius: 4px; padding: 4px; font-size: 13px; }
+  .flags-grid .save-flags { background: var(--primary) !important; color: #fff !important; align-self: flex-end; }
 </style>
 </head>
 <body>
@@ -207,16 +242,43 @@ ${THEME_HEAD}
     <button onclick="playAct('revive')">💀 부활</button>
     <button onclick="if(confirm('정말 초기화할까요?')) playAct('reset')">초기화</button>
   </div>
+  <div class="flags-box">
+    <h3>분기(flags) 직접 설정 — 디버깅용. 스토리 흐름과 안 맞는 조합을 넣으면 화면이 이상해질 수 있어요.</h3>
+    <div class="flags-grid">
+      ${flagsHtml}
+      <button class="save-flags" onclick="saveFlags()">저장</button>
+    </div>
+  </div>
 </div>
 <script>
   const PLAY_ID = ${JSON.stringify(id)};
-  async function playAct(action, stage, value) {
-    await fetch('/api/admin', {
+  const FLAG_KEYS = ${JSON.stringify(Object.keys(FLAG_CHOICES))};
+
+  async function postAdmin(body) {
+    const res = await fetch('/api/admin', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId: PLAY_ID, action, stage, value }),
+      body: JSON.stringify(body),
     });
-    location.reload();
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      alert('요청이 실패했어요 (' + res.status + ')' + (text ? '\\n' + text : ''));
+      return false;
+    }
+    return true;
+  }
+
+  async function playAct(action, stage, value) {
+    if (await postAdmin({ userId: PLAY_ID, action, stage, value })) location.reload();
+  }
+
+  async function saveFlags() {
+    const flags = {};
+    for (const key of FLAG_KEYS) {
+      const v = document.getElementById('flag-' + key).value;
+      flags[key] = v === '' ? null : v;
+    }
+    if (await postAdmin({ userId: PLAY_ID, action: 'setFlags', flags })) location.reload();
   }
 </script>
 </body>
@@ -282,8 +344,9 @@ function renderDashboard(users) {
         : ended
           ? "— 사건 종결 —"
           : `${STEPS[u.stage]?.title ?? "-"} (체력 ${u.hp ?? 10})`;
+      // data-* 는 검색/정렬을 서버를 다시 안 타고 브라우저에서만 처리하기 위한 값
       return `
-      <tr>
+      <tr data-id="${escapeHtml(u.id.toLowerCase())}" data-stage="${u.stage}" data-ended="${ended || u.dead ? 1 : 0}">
         <td>${escapeHtml(u.id)}</td>
         <td>${u.stage} / ${STEPS.length}<br><small>${escapeHtml(title)}</small></td>
         <td>${u.status}</td>
@@ -315,7 +378,8 @@ ${THEME_HEAD}
   h1 { margin-bottom: 4px; display: flex; justify-content: space-between; align-items: center; font-size: 22px; }
   table { border-collapse: collapse; width: 100%; margin-top: 16px; background: var(--card); }
   th, td { border: 1px solid var(--border); padding: 8px; font-size: 13px; vertical-align: top; text-align: left; }
-  th { background: var(--th); }
+  th { background: var(--th); cursor: pointer; user-select: none; }
+  th.sortable:hover { background: var(--btn-hover); }
   code { background: var(--th); padding: 1px 4px; border-radius: 3px; }
   .actions { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; }
   input[type="number"] { width: 50px; background: var(--input-bg); color: var(--fg); border: 1px solid var(--btn-border); border-radius: 4px; }
@@ -323,16 +387,23 @@ ${THEME_HEAD}
   button:hover { background: var(--btn-hover); }
   .danger { color: var(--danger); border-color: var(--danger); }
   .play { color: var(--link); border-color: var(--link); }
+  .stats-link { color: var(--link); border-color: var(--link); text-decoration: none; display: inline-block; }
   .logout { font-size: 13px; color: var(--muted); border: none; background: none; text-decoration: underline; cursor: pointer; }
   .header-actions { display: flex; gap: 8px; align-items: center; }
   .new-test { background: var(--primary); color: #fff; border-color: var(--primary); }
   .new-test:hover { background: var(--primary); opacity: 0.85; }
+  .toolbar { display: flex; gap: 8px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
+  .toolbar input[type="search"] { padding: 6px 10px; border: 1px solid var(--btn-border); border-radius: 4px; background: var(--input-bg); color: var(--fg); min-width: 200px; }
+  .toolbar select { padding: 6px; border: 1px solid var(--btn-border); border-radius: 4px; background: var(--input-bg); color: var(--fg); }
+  .toolbar .count { font-size: 12px; color: var(--muted); margin-left: auto; }
+  tr.hidden-row { display: none; }
 </style>
 </head>
 <body>
   <h1>
     📋 새빛재단 사건부 — 관리자 페이지
     <div class="header-actions">
+      <a href="/api/admin?stats=1"><button type="button" class="stats-link">📊 통계</button></a>
       <button class="new-test" onclick="createTestUser()">🧪 테스트 유저 생성</button>
       ${THEME_BUTTON}
       <form method="POST" action="/api/admin" style="margin:0">
@@ -342,23 +413,46 @@ ${THEME_HEAD}
     </div>
   </h1>
   <p>전체 단계 수: <b>${STEPS.length}</b> · 접속 유저 수: <b>${users.length}</b></p>
+  <div class="toolbar">
+    <input type="search" id="search" placeholder="유저 ID 검색" oninput="applyFilter()">
+    <select id="sortKey" onchange="applySort()">
+      <option value="stage-desc">진행 많은 순</option>
+      <option value="stage-asc">진행 적은 순</option>
+      <option value="id-asc">유저 ID순</option>
+    </select>
+    <select id="statusFilter" onchange="applyFilter()">
+      <option value="all">전체</option>
+      <option value="active">진행 중만</option>
+      <option value="ended">사망/종결만</option>
+    </select>
+    <span class="count" id="rowCount"></span>
+  </div>
   <table>
     <thead>
       <tr>
         <th>유저 ID</th><th>단계</th><th>상태</th><th>flags</th><th>관리</th>
       </tr>
     </thead>
-    <tbody>${rows || `<tr><td colspan="5">아직 아무도 시작하지 않았어요.</td></tr>`}</tbody>
+    <tbody id="userRows">${rows || `<tr><td colspan="5">아직 아무도 시작하지 않았어요.</td></tr>`}</tbody>
   </table>
 
 <script>
-  async function act(userId, action, extra) {
-    await fetch('/api/admin', {
+  async function postAdmin(body) {
+    const res = await fetch('/api/admin', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(Object.assign({ userId, action }, extra || {})),
+      body: JSON.stringify(body),
     });
-    location.reload();
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      alert('요청이 실패했어요 (' + res.status + ')' + (text ? '\\n' + text : ''));
+      return null;
+    }
+    return res;
+  }
+
+  async function act(userId, action, extra) {
+    if (await postAdmin(Object.assign({ userId, action }, extra || {}))) location.reload();
   }
 
   function setStage(userId) {
@@ -367,43 +461,188 @@ ${THEME_HEAD}
   }
 
   async function createTestUser() {
-    const res = await fetch('/api/admin', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'createTestUser' }),
-    });
+    const res = await postAdmin({ action: 'createTestUser' });
+    if (!res) return;
     const data = await res.json();
     if (data.id) location.href = '/api/admin?play=' + encodeURIComponent(data.id);
   }
+
+  // ── 검색 / 정렬 (서버 왕복 없이 브라우저에서만 처리) ──
+  function applyFilter() {
+    const q = document.getElementById('search').value.trim().toLowerCase();
+    const status = document.getElementById('statusFilter').value;
+    const rows = Array.from(document.querySelectorAll('#userRows tr[data-id]'));
+    let shown = 0;
+    for (const row of rows) {
+      const matchesQuery = !q || row.dataset.id.includes(q);
+      const ended = row.dataset.ended === '1';
+      const matchesStatus = status === 'all' || (status === 'ended') === ended;
+      const visible = matchesQuery && matchesStatus;
+      row.classList.toggle('hidden-row', !visible);
+      if (visible) shown += 1;
+    }
+    document.getElementById('rowCount').textContent = shown + ' / ' + rows.length + '명 표시 중';
+  }
+
+  function applySort() {
+    const key = document.getElementById('sortKey').value;
+    const tbody = document.getElementById('userRows');
+    const rows = Array.from(tbody.querySelectorAll('tr[data-id]'));
+    rows.sort((a, b) => {
+      if (key === 'id-asc') return a.dataset.id.localeCompare(b.dataset.id);
+      const diff = Number(a.dataset.stage) - Number(b.dataset.stage);
+      return key === 'stage-asc' ? diff : -diff;
+    });
+    for (const row of rows) tbody.appendChild(row);
+  }
+
+  applyFilter();
 </script>
 </body>
 </html>`;
 }
 
+// ── 통계 화면 ──────────────────────────────
+// 글자로 그린 막대그래프. 외부 차트 라이브러리 없이 가볍게.
+function bar(count, max, color) {
+  const pct = max > 0 ? Math.round((count / max) * 100) : 0;
+  return `<div class="bar-row">
+    <div class="bar-track"><div class="bar-fill" style="width:${pct}%; background:${color}"></div></div>
+    <span class="bar-label">${count} (${pct}%)</span>
+  </div>`;
+}
+
+function renderStatsPage(users) {
+  const totalUsers = users.length;
+  const endingStats = computeEndingStats(users);
+  const endingTotal = endingStats.reduce((sum, e) => sum + e.count, 0) || 1;
+  const choiceStats = computeChoiceStats(users);
+
+  const endingRows = endingStats
+    .map((e) => `<tr><td>${escapeHtml(e.title)}</td><td>${bar(e.count, endingTotal, "#9b59b6")}</td></tr>`)
+    .join("");
+
+  const choiceBlocks = choiceStats
+    .map((s) => {
+      const optionRows = s.options
+        .map((o) => `<tr><td>${escapeHtml(o.label)}</td><td>${bar(o.count, s.total, "#3498db")}</td></tr>`)
+        .join("");
+      return `
+      <div class="choice-block">
+        <h3>${escapeHtml(s.title)}${s.flagKey ? ` <small>(flag: ${s.flagKey})</small>` : ""} — 총 ${s.total}명</h3>
+        <table><tbody>${optionRows}</tbody></table>
+      </div>`;
+    })
+    .join("");
+
+  return `<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>통계 — 새빛재단 사건부</title>
+${THEME_HEAD}
+<style>
+  body { font-family: -apple-system, sans-serif; padding: 24px; max-width: 760px; margin: 0 auto; }
+  h1 { font-size: 20px; display: flex; justify-content: space-between; align-items: center; }
+  h1 a { font-size: 13px; color: var(--link); text-decoration: none; }
+  h2 { font-size: 15px; margin-top: 28px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+  h3 { font-size: 13px; margin: 18px 0 6px; }
+  h3 small { color: var(--muted); font-weight: 400; }
+  table { border-collapse: collapse; width: 100%; background: var(--card); }
+  td { padding: 4px 8px; font-size: 13px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  td:first-child { width: 42%; }
+  .bar-row { display: flex; align-items: center; gap: 8px; }
+  .bar-track { flex: 1; height: 10px; background: var(--th); border-radius: 5px; overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 5px; }
+  .bar-label { font-size: 11px; color: var(--muted); white-space: nowrap; width: 70px; text-align: right; }
+  .choice-block { margin-bottom: 8px; }
+  .empty { color: var(--muted); font-size: 13px; margin-top: 8px; }
+</style>
+</head>
+<body>
+  <h1>📊 통계 ${THEME_BUTTON}<a href="/api/admin">대시보드로 →</a></h1>
+  <p style="color:var(--muted); font-size:13px;">전체 유저 ${totalUsers}명 기준.</p>
+
+  <h2>엔딩 분포</h2>
+  ${endingTotal > 1 || endingStats.some((e) => e.count > 0)
+    ? `<table><tbody>${endingRows}</tbody></table>`
+    : `<p class="empty">아직 아무도 엔딩을 보지 못했어요.</p>`}
+
+  <h2>선택 분포 (진행 순)</h2>
+  ${choiceBlocks || `<p class="empty">아직 선택지를 고른 유저가 없어요.</p>`}
+</body>
+</html>`;
+}
+
+// DB 쪽 문제일 때 보여줄 간단한 에러 페이지. 관리자 본인만 보는 화면이라 에러 내용을 그대로 보여줘도 괜찮다.
+function renderErrorPage(err) {
+  const isRedis = Boolean(err?.isRedisError);
+  return `<!doctype html>
+<html lang="ko">
+<head><meta charset="utf-8"><title>오류 — 새빛재단 사건부</title>${THEME_HEAD}
+<style>body{font-family:-apple-system,sans-serif;padding:40px;max-width:560px;margin:0 auto;}
+.box{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:20px;}
+pre{white-space:pre-wrap;word-break:break-all;font-size:12px;color:var(--muted);}</style>
+</head><body><div class="box">
+<h2>${isRedis ? "⚠️ 저장소(Upstash) 연결에 문제가 있어요" : "⚠️ 오류가 발생했어요"}</h2>
+<p>${isRedis ? "환경변수(UPSTASH_REDIS_REST_URL/TOKEN 또는 KV_REST_API_*)와 Upstash 대시보드 상태를 확인해 주세요." : "잠시 후 새로고침해 보세요."}</p>
+<pre>${escapeHtml(err?.message ?? String(err))}</pre>
+<p><a href="/api/admin">← 대시보드로 돌아가기</a></p>
+</div></body></html>`;
+}
+
 export async function GET(request) {
-  if (!isLoggedIn(request)) {
-    return new Response(renderLoginPage(false), {
+  try {
+    if (!isLoggedIn(request)) {
+      return new Response(renderLoginPage(false), {
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+      });
+    }
+
+    const url = new URL(request.url);
+    const playId = url.searchParams.get("play");
+    if (playId) {
+      const user = await getUser(playId);
+      return new Response(renderPlayPage(playId, user), {
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+      });
+    }
+
+    if (url.searchParams.get("stats")) {
+      const users = await listUsers();
+      return new Response(renderStatsPage(users), {
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+      });
+    }
+
+    const users = await listUsers();
+    return new Response(renderDashboard(users), {
+      headers: { "Content-Type": "text/html; charset=utf-8" },
+    });
+  } catch (err) {
+    console.error("[admin:GET]", err);
+    return new Response(renderErrorPage(err), {
+      status: 500,
       headers: { "Content-Type": "text/html; charset=utf-8" },
     });
   }
-
-  const url = new URL(request.url);
-  const playId = url.searchParams.get("play");
-  if (playId) {
-    const user = await getUser(playId);
-    return new Response(renderPlayPage(playId, user), {
-      headers: { "Content-Type": "text/html; charset=utf-8" },
-    });
-  }
-
-  const users = await listUsers();
-  return new Response(renderDashboard(users), {
-    headers: { "Content-Type": "text/html; charset=utf-8" },
-  });
 }
 
 // 로그인 / 로그아웃 폼 제출 + (fetch로 오는) 유저 조작 액션을 한 파일에서 같이 처리
 export async function POST(request) {
+  try {
+    return await handlePost(request);
+  } catch (err) {
+    console.error("[admin:POST]", err);
+    const isRedis = Boolean(err?.isRedisError);
+    const message = isRedis
+      ? "저장소(Upstash) 연결에 문제가 있어요. 잠시 후 다시 시도해 주세요."
+      : "요청을 처리하는 중 오류가 발생했어요.";
+    return Response.json({ ok: false, error: message, detail: err?.message }, { status: isRedis ? 503 : 500 });
+  }
+}
+
+async function handlePost(request) {
   const contentType = request.headers.get("content-type") || "";
 
   // 로그인/로그아웃 폼은 일반 form submit (application/x-www-form-urlencoded)
