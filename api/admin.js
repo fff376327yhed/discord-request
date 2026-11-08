@@ -234,7 +234,7 @@ ${THEME_HEAD}
     <a href="/api/admin">← 대시보드로</a>
     <span>🧪 플레이 테스트 ${THEME_BUTTON}</span>
   </div>
-  <div class="meta">유저 ID: <code>${escapeHtml(id)}</code> · ${stageInfo}</div>
+  <div class="meta">유저 ID: <code>${escapeHtml(id)}</code>${user.discordName ? ` (${escapeHtml(user.discordName)})` : ""} · ${stageInfo}</div>
   ${embedToHtml(view)}
   ${buttonsToHtml(view)}
   <div class="admin-controls">
@@ -354,8 +354,8 @@ function renderDashboard(users) {
           : `${STEPS[u.stage]?.title ?? "-"} (체력 ${u.hp ?? 10})`;
       // data-* 는 검색/정렬을 서버를 다시 안 타고 브라우저에서만 처리하기 위한 값
       return `
-      <tr data-id="${escapeHtml(u.id.toLowerCase())}" data-stage="${u.stage}" data-ended="${ended || u.dead ? 1 : 0}">
-        <td>${escapeHtml(u.id)}</td>
+      <tr data-id="${escapeHtml(u.id.toLowerCase())}" data-name="${escapeHtml((u.discordName ?? "").toLowerCase())}" data-stage="${u.stage}" data-ended="${ended || u.dead ? 1 : 0}">
+        <td>${escapeHtml(u.id)}<br><small style="color:var(--muted)">${escapeHtml(u.discordName || "-")}</small></td>
         <td>${u.stage} / ${STEPS.length}<br><small>${escapeHtml(title)}</small></td>
         <td>${u.status}</td>
         <td><code>${escapeHtml(JSON.stringify(u.flags))}</code><br><small>단서: ${escapeHtml((u.clues ?? []).join(", ") || "-")}</small></td>
@@ -422,7 +422,7 @@ ${THEME_HEAD}
   </h1>
   <p>전체 단계 수: <b>${STEPS.length}</b> · 접속 유저 수: <b>${users.length}</b></p>
   <div class="toolbar">
-    <input type="search" id="search" placeholder="유저 ID 검색" oninput="applyFilter()">
+    <input type="search" id="search" placeholder="유저 ID/이름 검색" oninput="applyFilter()">
     <select id="sortKey" onchange="applySort()">
       <option value="stage-desc">진행 많은 순</option>
       <option value="stage-asc">진행 적은 순</option>
@@ -482,7 +482,7 @@ ${THEME_HEAD}
     const rows = Array.from(document.querySelectorAll('#userRows tr[data-id]'));
     let shown = 0;
     for (const row of rows) {
-      const matchesQuery = !q || row.dataset.id.includes(q);
+      const matchesQuery = !q || row.dataset.id.includes(q) || row.dataset.name.includes(q);
       const ended = row.dataset.ended === '1';
       const matchesStatus = status === 'all' || (status === 'ended') === ended;
       const visible = matchesQuery && matchesStatus;

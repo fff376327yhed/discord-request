@@ -61,6 +61,7 @@ export async function POST(request) {
 
   const discordUser = interaction.member?.user ?? interaction.user;
   const userId = discordUser.id;
+  const discordName = discordUser.global_name ?? discordUser.username;
 
   try {
     // 3) 슬래시 명령어
@@ -129,6 +130,7 @@ export async function POST(request) {
         if (action === "intro") {
           if (user.introSeen) return update(stepView(user));
           user.introSeen = true;
+          user.discordName = discordName;
           await saveUser(userId, user);
           return update(stepView(user));
         }
@@ -142,6 +144,7 @@ export async function POST(request) {
         if (action === "restart") {
           if (!user.dead && user.stage < STEPS.length) return update(stepView(user));
           const fresh = restartUser(user);
+          fresh.discordName = discordName;
           await saveUser(userId, fresh);
           return update(stepView(fresh));
         }
@@ -156,6 +159,7 @@ export async function POST(request) {
 
           applyQuestClear(user, step);
 
+          user.discordName = discordName;
           await saveUser(userId, user);
           return update(clearedView(step, user));
         }
@@ -171,6 +175,7 @@ export async function POST(request) {
 
           applyChoice(user, step, option);
 
+          user.discordName = discordName;
           await saveUser(userId, user);
           return update(choiceResultView(option, user));
         }
@@ -212,6 +217,7 @@ export async function POST(request) {
 
         applyChoice(user, step, option);
 
+        user.discordName = discordName;
         await saveUser(userId, user);
         return update(choiceResultView(option, user));
       } finally {
