@@ -1,5 +1,5 @@
 import { verifyKey } from "discord-interactions";
-import { after } from "next/server"; // Next.js 15+ 의 after() — 응답을 보낸 "뒤에" 코드를 계속 실행한다
+import { waitUntil } from "@vercel/functions"; // Next.js 없이도 쓸 수 있는, 응답을 보낸 "뒤에" 코드를 계속 실행하는 Vercel API
 import {
   STEPS,
   applyQuestClear,
@@ -43,7 +43,7 @@ const row = (...components) => ({ type: 1, components });
 
 // ── 지연 응답(defer) 뒤의 실제 작업 ──────────────────────────────
 // 콜드 스타트나 Redis 왕복이 느려서 3초를 넘길 수 있는 모든 처리는
-// 먼저 DEFERRED_* 로 즉시 ack한 다음, after() 안에서 이 함수로 실제 내용을 채운다.
+// 먼저 DEFERRED_* 로 즉시 ack한 다음, waitUntil()로 연장된 시간 안에서 이 함수로 실제 내용을 채운다.
 // workFn이 null/undefined를 반환하면(= 연타로 잠금 실패 등) 화면을 그대로 둔다.
 async function runDeferred(token, workFn) {
   try {
@@ -102,7 +102,7 @@ export async function POST(request) {
   try {
     // 3) 슬래시 명령어 — 일단 "생각 중"만 즉시 ack하고, 실제 내용은 뒤에서 채운다.
     if (interaction.type === 2) {
-      after(() =>
+      waitUntil(
         runDeferred(interaction.token, async () => {
           const user = await getUser(userId);
           switch (interaction.data.name) {
@@ -152,7 +152,7 @@ export async function POST(request) {
 
       // 그 외 모든 버튼(pg 포함): 콜드 스타트·Redis 지연으로 3초를 넘길 수 있으니
       // 먼저 "처리 중"만 즉시 ack하고, 실제 화면은 뒤에서 채운다.
-      after(() =>
+      waitUntil(
         runDeferred(interaction.token, async () => {
           // 긴 글의 "다음 ▶ / ◀ 이전 쪽" 버튼: 진행 상태를 바꾸지 않으니 잠금 없이 화면만 다시 그린다.
           if (action === "pg") {
@@ -235,7 +235,7 @@ export async function POST(request) {
       const [kind, stageStr] = interaction.data.custom_id.split(":");
       if (kind !== "freeform") return reply(messageOnly("처리할 수 없는 요청이에요."));
 
-      after(() =>
+      waitUntil(
         runDeferred(interaction.token, async () => {
           // 연타 방지 (버튼 클릭과 동일한 잠금을 공유)
           if (!(await acquireLock(userId))) return null;
