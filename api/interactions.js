@@ -105,6 +105,11 @@ export async function POST(request) {
       waitUntil(
         runDeferred(interaction.token, async () => {
           const user = await getUser(userId);
+          // 버튼을 아직 안 눌렀거나 닉네임을 바꾼 유저도 관리자 페이지에 이름이 보이게
+          if (user.discordName !== discordName) {
+            user.discordName = discordName;
+            await saveUser(userId, user);
+          }
           switch (interaction.data.name) {
             case "의뢰":
               // 최초 1회: 세계관 + 해결사 소개부터 보여준다
