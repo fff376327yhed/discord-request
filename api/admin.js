@@ -12,6 +12,7 @@ import {
   applyQuestClear,
   applyChoice,
   availableOptions,
+  matchFreeText,
   introView,
   stepView,
   reviveUser,
@@ -269,6 +270,13 @@ ${THEME_HEAD}
   }
 
   async function playAct(action, stage, value) {
+    // "✍️ 직접 입력" 버튼: 디스코드의 모달 대신 여기선 prompt() 로 받는다.
+    if (action === 'free') {
+      const text = prompt('직접 답해보세요');
+      if (text === null || text.trim() === '') return; // 취소/빈 입력이면 아무 일도 안 일어난다
+      action = 'freeText';
+      value = text.trim().slice(0, 200);
+    }
     if (await postAdmin({ userId: PLAY_ID, action, stage, value })) location.reload();
   }
 
@@ -753,6 +761,19 @@ async function handlePost(request) {
       if (step?.type === "choice") {
         const option = availableOptions(step, user).find((o) => o.value === value);
         if (option) applyChoice(user, step, option);
+      }
+      break;
+    }
+    // "✍️ 직접 입력"(admin.js 플레이 테스트의 prompt()) — interactions.js의 모달 제출과 동일한 로직
+    case "freeText": {
+      const step = STEPS[user.stage];
+      const rawText = String(value ?? "").trim();
+      if (step?.type === "choice" && step.freeText && rawText) {
+        const option = matchFreeText(step, rawText);
+        if (option) {
+          user.freeTextEcho = { stage: user.stage, text: rawText };
+          applyChoice(user, step, option);
+        }
       }
       break;
     }

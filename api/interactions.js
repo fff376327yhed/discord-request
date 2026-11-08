@@ -4,6 +4,8 @@ import {
   applyQuestClear,
   applyChoice,
   availableOptions,
+  matchFreeText,
+  FREE_TEXT_MAX_LEN,
   getUser,
   saveUser,
   acquireLock,
@@ -24,6 +26,7 @@ const PONG = 1;
 const CHANNEL_MESSAGE = 4; // 새 메시지
 const UPDATE_MESSAGE = 7; // 버튼이 달린 기존 메시지 수정
 const DEFERRED_UPDATE = 6; // 화면은 그대로 두고 조용히 응답 완료
+const MODAL = 9; // 입력창(모달)을 띄움
 
 const json = (body) =>
   new Response(JSON.stringify(body), { headers: { "Content-Type": "application/json" } });
@@ -32,6 +35,9 @@ const json = (body) =>
 const reply = (data) => json({ type: CHANNEL_MESSAGE, data: { ...data, flags: FLAGS } });
 // 버튼 클릭 응답: 기존(ephemeral) 메시지를 그 자리에서 갱신
 const update = (data) => json({ type: UPDATE_MESSAGE, data });
+// 버튼 클릭에 대한 응답으로 입력창(모달)을 띄운다
+const modal = (data) => json({ type: MODAL, data });
+const row = (...components) => ({ type: 1, components });
 
 export async function POST(request) {
   // 1) Discord 서명 검증 (필수). 원본 body 문자열이 필요하므로 text()로 읽습니다.
@@ -81,6 +87,33 @@ export async function POST(request) {
         const user = await getUser(userId);
         if (user.stage !== Number(stageStr)) return update(stepView(user));
         return update(pageView(user, value));
+      }
+
+      // "✍️ 직접 입력" 버튼: 상태를 바꾸지 않고 모달만 띄운다 (제출은 아래 type === 5 에서 처리).
+      if (action === "free") {
+        const user = await getUser(userId);
+        const stage = Number(stageStr);
+        if (user.stage !== stage) return update(stepView(user));
+
+        const step = STEPS[stage];
+        if (!step || step.type !== "choice" || !step.freeText) return update(stepView(user));
+
+        return modal({
+          title: step.title.replace(/^.*?: /, "").slice(0, 45),
+          custom_id: `freeform:${stage}`,
+          components: [
+            row({
+              type: 4, // TEXT_INPUT
+              custom_id: "text",
+              style: 2, // PARAGRAPH
+              label: (step.freeText.prompt ?? "직접 답해보세요").slice(0, 45),
+              placeholder: step.freeText.placeholder?.slice(0, 100),
+              min_length: 1,
+              max_length: FREE_TEXT_MAX_LEN,
+              required: true,
+            }),
+          ],
+        });
       }
 
       // 연타 방지
@@ -141,6 +174,46 @@ export async function POST(request) {
           await saveUser(userId, user);
           return update(choiceResultView(option, user));
         }
+      } finally {
+        await releaseLock(userId);
+      }
+    }
+
+    // 5) 모달("✍️ 직접 입력") 제출
+    if (interaction.type === 5) {
+      const [kind, stageStr] = interaction.data.custom_id.split(":");
+      if (kind !== "freeform") return reply(messageOnly("처리할 수 없는 요청이에요."));
+
+      // 연타 방지 (버튼 클릭과 동일한 잠금을 공유)
+      if (!(await acquireLock(userId))) {
+        return json({ type: DEFERRED_UPDATE });
+      }
+
+      try {
+        const user = await getUser(userId);
+        const stage = Number(stageStr);
+
+        // 오래된 모달 제출 (그 사이 다른 버튼으로 이미 진행된 경우)
+        if (user.stage !== stage) return update(stepView(user));
+
+        const step = STEPS[stage];
+        if (!step || step.type !== "choice" || !step.freeText) return update(stepView(user));
+
+        const rawText = (interaction.data.components[0]?.components[0]?.value ?? "")
+          .trim()
+          .slice(0, FREE_TEXT_MAX_LEN);
+        if (!rawText) return update(stepView(user));
+
+        const option = matchFreeText(step, rawText);
+        if (!option) return update(stepView(user));
+
+        // 결과 화면에서 입력한 글을 인용해 보여줄 수 있도록 stage/text 를 함께 기록해 둔다.
+        user.freeTextEcho = { stage: user.stage, text: rawText };
+
+        applyChoice(user, step, option);
+
+        await saveUser(userId, user);
+        return update(choiceResultView(option, user));
       } finally {
         await releaseLock(userId);
       }
