@@ -1,7 +1,10 @@
 import { verifyKey } from "discord-interactions";
 import { waitUntil } from "@vercel/functions"; // Next.js 없이도 쓸 수 있는, 응답을 보낸 "뒤에" 코드를 계속 실행하는 Vercel API
 import {
-  STEPS,
+  stepsOf,
+  needsIntro,
+  switchStory,
+  storyPickView,
   applyQuestClear,
   applyChoice,
   availableOptions,
@@ -112,8 +115,11 @@ export async function POST(request) {
           }
           switch (interaction.data.name) {
             case "의뢰":
-              // 최초 1회: 세계관 + 해결사 소개부터 보여준다
-              return !user.introSeen ? introView() : stepView(user);
+              if (!user.storyId) return storyPickView(user);
+              // 새빛재단은 최초 1회 세계관 + 해결사 소개부터 보여준다
+              return needsIntro(user) ? introView() : stepView(user);
+            case "이야기":
+              return storyPickView(user);
             case "내정보":
               return profileView(user, discordName);
             default:
@@ -181,6 +187,15 @@ export async function POST(request) {
               return stepView(user);
             }
 
+                        // 이야기 선택("story:<id>") / 이야기 목록으로("menu:<n>")
+            if (action === "story" || action === "menu") {
+              const next = switchStory(user, action === "story" ? stageStr : null);
+              next.discordName = discordName;
+              await saveUser(userId, next);
+              if (!next.storyId) return storyPickView(next);
+              return needsIntro(next) ? introView() : stepView(next);
+            }
+
             const stage = Number(stageStr);
 
             // 오래된 메시지의 버튼을 눌렀을 때 (이미 진행된 단계)
@@ -188,7 +203,7 @@ export async function POST(request) {
 
             // 엔딩 화면의 "처음부터 다시 시작한다" (결말에 닿은 유저만)
             if (action === "restart") {
-              if (!user.dead && user.stage < STEPS.length) return stepView(user);
+              if (!user.dead && user.stage < stepsOf(user).length) return stepView(user);
               const fresh = restartUser(user);
               fresh.discordName = discordName;
               await saveUser(userId, fresh);
@@ -200,7 +215,7 @@ export async function POST(request) {
 
             // 행동 버튼 → 단서 획득 + 결과 서술 화면 (쿨다운 없음, 보상 없음)
             if (action === "complete") {
-              const step = STEPS[user.stage];
+              const step = stepsOf(user)[user.stage];
               if (!step || step.type !== "quest") return stepView(user);
 
               applyQuestClear(user, step);
@@ -213,7 +228,7 @@ export async function POST(request) {
             // 분기 선택 → flag/단서 저장 → 결과 서술 화면 (쿨다운 없음)
             // 조건(requires)을 만족하지 못한 선택지는 availableOptions 에서 걸러진다.
             if (action === "choose") {
-              const step = STEPS[user.stage];
+                            const step = stepsOf(user)[user.stage];
               if (!step || step.type !== "choice") return stepView(user);
 
               const option = availableOptions(step, user).find((o) => o.value === value);
@@ -252,7 +267,7 @@ export async function POST(request) {
             // 오래된 모달 제출 (그 사이 다른 버튼으로 이미 진행된 경우)
             if (user.stage !== stage) return stepView(user);
 
-            const step = STEPS[stage];
+            const step = stepsOf(user)[stage];
             if (!step || step.type !== "choice" || !step.freeText) return stepView(user);
 
             const rawText = (interaction.data.components[0]?.components[0]?.value ?? "")

@@ -8,7 +8,10 @@ import {
   resetUser,
   deleteUser,
   newUser,
-  STEPS,
+  STORIES,
+  stepsOf,
+  needsIntro,
+  switchStory,
   applyQuestClear,
   applyChoice,
   availableOptions,
@@ -157,6 +160,8 @@ function buttonsToHtml(view) {
           } else if (kind === "choose") {
             stage = part1;
             value = part2;
+          } else if (kind === "story") {
+            value = part1; // 이야기 id
           } else {
             stage = part1; // complete / next
           }
@@ -185,13 +190,16 @@ function flagSelect(key, current) {
 
 // ── 플레이 테스트 화면 ──────────────────────────────
 function renderPlayPage(id, user) {
-  const view = !user.introSeen ? introView(0, true) : stepView(user, { full: true });
+  const steps = stepsOf(user);
+  const view = needsIntro(user) ? introView(0, true) : stepView(user, { full: true });
   const stageInfo =
-    user.dead
+    !user.storyId
+      ? "이야기 미선택"
+      : user.dead
       ? `💀 사망 (${user.dead}) · 체력 ${user.hp}`
-      : user.stage >= STEPS.length
+      : user.stage >= steps.length
       ? "사건 종결"
-      : `${user.stage + 1} / ${STEPS.length} 단계 · ${user.status === "active" ? "진행 중" : "대기"}`;
+      : `${STORIES[user.storyId].title} · ${user.stage + 1} / ${steps.length} 단계 · ${user.status === "active" ? "진행 중" : "대기"}`;
   const flagsHtml = Object.keys(FLAG_CHOICES)
     .map((key) => flagSelect(key, user.flags?.[key] ?? null))
     .join("");
@@ -346,17 +354,20 @@ ${THEME_HEAD}
 function renderDashboard(users) {
   const rows = users
     .map((u) => {
-      const ended = u.stage >= STEPS.length;
-      const title = u.dead
-        ? `— 💀 사망: ${u.dead} (체력 ${u.hp}) —`
-        : ended
-          ? "— 사건 종결 —"
-          : `${STEPS[u.stage]?.title ?? "-"} (체력 ${u.hp ?? 10})`;
+      const steps = stepsOf(u);
+      const ended = !!u.storyId && u.stage >= steps.length;
+      const title = !u.storyId
+        ? "— 이야기 미선택 —"
+        : u.dead
+          ? `— 💀 사망: ${u.dead} (체력 ${u.hp}) —`
+          : ended
+            ? "— 사건 종결 —"
+            : `${steps[u.stage]?.title ?? "-"} (체력 ${u.hp ?? 10})`;
       // data-* 는 검색/정렬을 서버를 다시 안 타고 브라우저에서만 처리하기 위한 값
       return `
       <tr data-id="${escapeHtml(u.id.toLowerCase())}" data-name="${escapeHtml((u.discordName ?? "").toLowerCase())}" data-stage="${u.stage}" data-ended="${ended || u.dead ? 1 : 0}">
         <td>${escapeHtml(u.id)}<br><small style="color:var(--muted)">${escapeHtml(u.discordName || "-")}</small></td>
-        <td>${u.stage} / ${STEPS.length}<br><small>${escapeHtml(title)}</small></td>
+                <td>${u.stage} / ${steps.length}<br><small>${escapeHtml(STORIES[u.storyId]?.title ?? "-")} · ${escapeHtml(title)}</small></td>
         <td>${u.status}</td>
         <td><code>${escapeHtml(JSON.stringify(u.flags))}</code><br><small>단서: ${escapeHtml((u.clues ?? []).join(", ") || "-")}</small></td>
         <td>
@@ -420,7 +431,7 @@ ${THEME_HEAD}
       </form>
     </div>
   </h1>
-  <p>전체 단계 수: <b>${STEPS.length}</b> · 접속 유저 수: <b>${users.length}</b></p>
+    <p>${Object.values(STORIES).map((s) => `${escapeHtml(s.title)} <b>${s.steps.length}</b>단계`).join(" · ")} · 접속 유저 수: <b>${users.length}</b></p>
   <div class="toolbar">
     <input type="search" id="search" placeholder="유저 ID/이름 검색" oninput="applyFilter()">
     <select id="sortKey" onchange="applySort()">
@@ -718,8 +729,15 @@ async function handlePost(request) {
   }
 
   const user = await getUser(userId);
+  const steps = stepsOf(user);
 
   switch (action) {
+    case "story":
+      Object.assign(user, switchStory(user, value));
+      break;
+    case "menu":
+      Object.assign(user, switchStory(user, null));
+      break;
     case "restart":
       Object.assign(user, restartUser(user));
       break;
@@ -728,7 +746,7 @@ async function handlePost(request) {
       break;
     case "advance":
       if (user.dead) reviveUser(user); // 사망 상태에서 단계를 옮기면 엔딩 화면에 갇히므로 함께 풀어준다
-      user.stage = Math.min(user.stage + 1, STEPS.length);
+     user.stage = Math.min(user.stage + 1, steps.length);
       user.status = "ready";
       break;
     case "rewind":
@@ -738,7 +756,7 @@ async function handlePost(request) {
       break;
     case "setStage":
       if (user.dead) reviveUser(user);
-      user.stage = Math.max(0, Math.min(Number(stage), STEPS.length));
+      user.stage = Math.max(0, Math.min(Number(stage), steps.length));
       user.status = "ready";
       break;
     case "setFlags":
@@ -752,12 +770,12 @@ async function handlePost(request) {
     case "next":
       break;
     case "complete": {
-      const step = STEPS[user.stage];
+      const step = steps[user.stage];
       if (step?.type === "quest") applyQuestClear(user, step);
       break;
     }
     case "choose": {
-      const step = STEPS[user.stage];
+      const step = steps[user.stage];
       if (step?.type === "choice") {
         const option = availableOptions(step, user).find((o) => o.value === value);
         if (option) applyChoice(user, step, option);
@@ -766,7 +784,7 @@ async function handlePost(request) {
     }
     // "✍️ 직접 입력"(admin.js 플레이 테스트의 prompt()) — interactions.js의 모달 제출과 동일한 로직
     case "freeText": {
-      const step = STEPS[user.stage];
+      const step = steps[user.stage];
       const rawText = String(value ?? "").trim();
       if (step?.type === "choice" && step.freeText && rawText) {
         const option = matchFreeText(step, rawText);
